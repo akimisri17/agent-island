@@ -14,7 +14,7 @@ Reads Claude Code (~/.claude/projects), Codex (~/.codex/sessions), and Cursor
 sent anywhere.
 
 Usage: agent-wrapped [--days 30] [--out agent-wrapped.html] [--json] [--no-open] [--demo]
-                     [--agent claude|codex|cursor] [--maker Anthropic|OpenAI|xAI|...]
+                     [--agent claude|codex|cursor|antigravity] [--maker Anthropic|OpenAI|xAI|...]
 
   --demo    made-up data, to see the report without any agent logs
   --agent   only sessions from one agent
@@ -80,7 +80,7 @@ async function main() {
     process.stdout.write(JSON.stringify({ ...rest, files: result.files, bytes: result.bytes, seconds }, null, 2) + '\n');
     return;
   }
-  if (result.files.claude + result.files.codex + result.files.cursor === 0) {
+  if (Object.values(result.files).every((n) => !n)) {
     process.stderr.write(`No agent logs from the last ${opts.days} days in ${roots.claude} or ${roots.codex}.\n`);
     process.exitCode = 1;
     return;

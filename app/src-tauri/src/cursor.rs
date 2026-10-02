@@ -7,8 +7,9 @@
 //! Headers carry type (1 = person, 2 = agent) and timestamps. Cursor stores no
 //! token counts locally, so sessions from here have zero tokens.
 
-use crate::logs::{basename, Builder, Session};
-use rusqlite::{Connection, OpenFlags};
+use crate::foreign::open_foreign_db;
+use crate::logs::{project_of, Builder, Session};
+use rusqlite::Connection;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::Path;
@@ -96,8 +97,7 @@ fn cursor_model(name: Option<&str>) -> String {
 /// Any failure (no database, locked, schema changed) yields no Cursor
 /// sessions rather than failing the whole scan.
 pub fn parse_cursor_db(path: &Path, since: i64) -> Vec<Session> {
-    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let Ok(db) = Connection::open_with_flags(path, flags) else { return Vec::new() };
+    let Some(db) = open_foreign_db(path) else { return Vec::new() };
     read(&db, path, since).unwrap_or_default()
 }
 
@@ -122,7 +122,7 @@ fn read(db: &Connection, path: &Path, since: i64) -> rusqlite::Result<Vec<Sessio
         let id = d.composer_id.clone().unwrap_or_else(|| key["composerData:".len()..].to_string());
         let mut b = Builder::new("cursor", id.clone(), path);
         b.s.title = d.name.filter(|n| !n.is_empty());
-        b.s.project = d.workspace_identifier.and_then(|w| w.uri).and_then(|u| u.fs_path).as_deref().and_then(basename);
+        b.s.project = d.workspace_identifier.and_then(|w| w.uri).and_then(|u| u.fs_path).as_deref().and_then(project_of);
         b.s.is_subagent = subagents.contains(&id) || d.is_best_of_n_subcomposer == Some(true);
         let model = cursor_model(d.model_config.and_then(|m| m.model_name).as_deref());
 

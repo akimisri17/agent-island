@@ -1,7 +1,7 @@
 import { fmtHour } from './stats.mjs';
 import { prettyModel } from './models.mjs';
 
-export const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
+export const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', antigravity: 'Antigravity' };
 const agentName = (a) => AGENT_NAMES[a] || a;
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -269,12 +269,12 @@ footer ul { padding-left: 18px; }
 </section>
 
 <footer>
-  Made on this Mac from ${fmtNum(meta.files.claude)} Claude Code and ${fmtNum(meta.files.codex)} Codex log files${meta.files.cursor ? ' plus the Cursor chat database' : ''} (${(meta.bytes / 1e9).toFixed(1)} GB) in ${meta.seconds.toFixed(1)}s. Nothing was sent anywhere.
+  Made on this Mac from ${fmtNum(meta.files.claude)} Claude Code and ${fmtNum(meta.files.codex)} Codex log files${meta.files.cursor ? ', the Cursor chat database' : ''}${meta.files.antigravity ? `, ${fmtNum(meta.files.antigravity)} Antigravity conversations` : ''} (${(meta.bytes / 1e9).toFixed(1)} GB) in ${meta.seconds.toFixed(1)}s. Nothing was sent anywhere.
   <ul>
     <li>Agent-hours: time from your prompt to the agent's last action in that turn, capped at 3 hours per turn. Parallel sessions add up.</li>
     <li>Sessions you started: ones with at least one prompt you typed. ${fmtNum(st.automatedRuns)} runs driven by plugins or scripts and ${fmtNum(st.subagentRuns)} subagent runs are counted in tokens only.</li>
-    <li>Models are compared by number of responses, because Cursor keeps no token counts on disk. Token figures cover Claude Code and Codex only.</li>
-    <li>Gemini, Copilot, Qwen Code, and web chats are not read yet.</li>
+    <li>Models are compared by number of responses, because Cursor keeps no token counts on disk. Cursor and Antigravity keep no token counts we can read, so token figures cover Claude Code and Codex only.</li>
+    <li>Gemini CLI, Copilot, Qwen Code, the Antigravity IDE, and web chats are not read yet.</li>
   </ul>
 </footer>
 </main>

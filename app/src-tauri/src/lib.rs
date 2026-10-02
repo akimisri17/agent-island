@@ -1,4 +1,6 @@
+pub mod antigravity;
 pub mod cursor;
+pub mod foreign;
 pub mod logs;
 
 use tauri::{

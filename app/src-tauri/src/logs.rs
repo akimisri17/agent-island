@@ -78,6 +78,7 @@ pub struct FileCounts {
     pub claude: usize,
     pub codex: usize,
     pub cursor: usize,
+    pub antigravity: usize,
 }
 
 /// Session-building state shared by both adapters. A human prompt opens a
@@ -142,6 +143,16 @@ impl Builder {
         self.s.files_edited = files;
         self.s
     }
+}
+
+/// The project a working directory belongs to. Git worktrees count toward
+/// their repository: /repo/.worktrees/x and /repo/.claude/worktrees/y are "repo".
+pub fn project_of(cwd: &str) -> Option<String> {
+    let parts: Vec<&str> = cwd.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    if let Some(wt) = parts.iter().position(|p| *p == ".worktrees" || *p == "worktrees").filter(|&i| i > 0) {
+        return parts[..wt].iter().rev().find(|p| **p != ".claude").map(|p| p.to_string());
+    }
+    parts.last().map(|p| p.to_string())
 }
 
 pub fn basename(p: &str) -> Option<String> {
@@ -250,7 +261,7 @@ pub fn parse_claude(path: &Path, since: i64, is_subagent: bool) -> Session {
             continue;
         }
         if b.s.project.is_none() {
-            b.s.project = d.cwd.as_deref().and_then(basename);
+            b.s.project = d.cwd.as_deref().and_then(project_of);
         }
         if let Some(q) = &d.quota_limits {
             if q.status.as_deref() == Some("rejected") {
@@ -399,7 +410,7 @@ pub fn parse_codex(path: &Path, since: i64) -> Session {
                 b.s.id = id;
             }
             if let Some(cwd) = p.cwd.as_deref() {
-                b.s.project = basename(cwd);
+                b.s.project = project_of(cwd);
             }
             continue;
         }
@@ -489,6 +500,7 @@ pub struct Roots {
     pub claude: PathBuf,
     pub codex: PathBuf,
     pub cursor: PathBuf,
+    pub gemini: PathBuf,
 }
 
 impl Roots {
@@ -499,6 +511,7 @@ impl Roots {
             claude: claude.join("projects"),
             codex: codex.join("sessions"),
             cursor: cursor_user_dir(home).join("globalStorage").join("state.vscdb"),
+            gemini: std::env::var_os("GEMINI_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".gemini")),
         }
     }
 }
@@ -545,9 +558,11 @@ pub fn scan(roots: &Roots, days: u32) -> ScanResult {
     let (mut claude, mut codex) = (Vec::new(), Vec::new());
     list_jsonl(&roots.claude, since, &mut claude);
     list_jsonl(&roots.codex, since, &mut codex);
+    let mut agy = Vec::new();
+    crate::antigravity::list(&roots.gemini, since, &mut agy);
     let cursor_size = std::fs::metadata(&roots.cursor).map_or(0, |m| m.len());
-    let bytes = claude.iter().chain(codex.iter()).map(|(_, n)| n).sum::<u64>() + cursor_size;
-    let files = FileCounts { claude: claude.len(), codex: codex.len(), cursor: usize::from(cursor_size > 0) };
+    let bytes = claude.iter().chain(codex.iter()).chain(agy.iter()).map(|(_, n)| n).sum::<u64>() + cursor_size;
+    let files = FileCounts { claude: claude.len(), codex: codex.len(), cursor: usize::from(cursor_size > 0), antigravity: agy.len() };
 
     let mut sessions: Vec<Session> = claude
         .par_iter()
@@ -556,6 +571,7 @@ pub fn scan(roots: &Roots, days: u32) -> ScanResult {
             parse_claude(p, since, sub)
         })
         .chain(codex.par_iter().map(|(p, _)| parse_codex(p, since)))
+        .chain(agy.par_iter().map(|(p, _)| crate::antigravity::parse(p, since)))
         .filter(|s| s.start.is_some())
         .collect();
     if cursor_size > 0 {
@@ -610,6 +626,14 @@ mod tests {
         assert_eq!(s.peak_quota_pct, Some(100.0));
         assert_eq!(s.limit_hits.len(), 1);
         assert_eq!(s.tools.get("apply_patch"), Some(&1));
+    }
+
+    #[test]
+    fn project_of_folds_worktrees() {
+        assert_eq!(project_of("/u/me/shop/.worktrees/WO-1").as_deref(), Some("shop"));
+        assert_eq!(project_of("/u/me/site/.claude/worktrees/fix").as_deref(), Some("site"));
+        assert_eq!(project_of("C:\\work\\api\\.worktrees\\b").as_deref(), Some("api"));
+        assert_eq!(project_of("/u/me/shop").as_deref(), Some("shop"));
     }
 
     #[test]
