@@ -24,6 +24,7 @@ export function newSession(agent, id, file) {
     id,
     file,
     project: null,
+    cwd: null, // working directory, for finding the repository
     title: null,
     start: null,
     end: null,

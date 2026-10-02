@@ -48,7 +48,8 @@ function readComposers(db, path, since) {
     const id = d.composerId || row.key.slice('composerData:'.length);
     const s = newSession('cursor', id, path);
     s.title = d.name || null;
-    s.project = projectOf(d.workspaceIdentifier?.uri?.fsPath);
+    s.cwd = d.workspaceIdentifier?.uri?.fsPath || null;
+    s.project = projectOf(s.cwd);
     s.isSubagent = subagents.has(id) || Boolean(d.isBestOfNSubcomposer);
     const model = cursorModel(d.modelConfig?.modelName);
     const turns = createTurnTracker(s);

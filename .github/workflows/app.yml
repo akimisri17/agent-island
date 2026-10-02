@@ -23,6 +23,8 @@ jobs:
         with: { node-version: 22 }
       - run: npm test
         working-directory: wrapped
+      - run: node --test test/*.test.mjs
+        working-directory: app
       - uses: dtolnay/rust-toolchain@stable
       - run: node scripts/sync-lib.mjs
         working-directory: app

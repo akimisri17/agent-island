@@ -2,6 +2,7 @@
 // (synced into ./lib by scripts/sync-lib.mjs) turns them into numbers.
 import { computeStats, filterSessions, filterOptions } from './lib/stats.mjs';
 import { renderHtml, fmtNum, AGENT_NAMES } from './lib/render.mjs';
+import { buildRecap } from './recap.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -85,6 +86,7 @@ function liveRow(s) {
   return li;
 }
 
+let lastLive = [];
 async function loadLive() {
   let sessions;
   try {
@@ -93,6 +95,7 @@ async function loadLive() {
     if (view === 'waiting') $('updated').textContent = `Could not list sessions: ${e}`;
     return;
   }
+  lastLive = sessions;
   const waiting = sessions.filter((s) => s.state !== 'working');
   const working = sessions.filter((s) => s.state === 'working');
   $('wcount').textContent = waiting.length ? String(waiting.length) : '';
@@ -180,13 +183,18 @@ function setView(v) {
     }
   }
   for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === v));
-  for (const name of ['waiting', 'wrapped', 'settings']) $(`view-${name}`).hidden = v !== name;
+  for (const name of ['waiting', 'today', 'wrapped', 'settings']) $(`view-${name}`).hidden = v !== name;
   document.querySelector('.wrapped-only').hidden = v !== 'wrapped';
   $('gear').setAttribute('aria-pressed', String(v === 'settings'));
   $('refresh').hidden = v === 'settings';
   if (v === 'settings') {
     $('updated').textContent = '';
     showSettings();
+    return;
+  }
+  if (v === 'today') {
+    $('updated').textContent = '';
+    loadToday();
     return;
   }
   if (v === 'waiting') {
@@ -340,11 +348,98 @@ for (const key of ['agent', 'maker']) {
   });
 }
 $('report').addEventListener('click', openReport);
-$('refresh').addEventListener('click', () => (view === 'waiting' ? (loadLive(), loadLimits(true)) : load(true)));
+$('refresh').addEventListener('click', () => {
+  if (view === 'waiting') return loadLive(), loadLimits(true);
+  if (view === 'today') return loadToday(true);
+  return load(true);
+});
 for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => setView(b.dataset.view));
 $('quit').addEventListener('click', () => invoke('quit'));
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.__TAURI__.window.getCurrentWindow().hide();
+});
+
+// --- Today ---
+
+let recap = null;
+let polishedText = null;
+let todayAt = 0;
+
+async function loadToday(force = false) {
+  if (!force && recap && Date.now() - todayAt < 60_000) return renderToday();
+  $('today-total').textContent = recap ? $('today-total').textContent : "Reading today's logs…";
+  try {
+    const [scan] = await Promise.all([invoke('scan_today'), loadLive()]);
+    const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
+    const commits = await invoke('recap_commits', { cwds, since: scan.since }).catch(() => []);
+    recap = buildRecap({ sessions: scan.sessions, commits, live: lastLive });
+    todayAt = Date.now();
+    polishedText = null;
+    renderToday();
+  } catch (e) {
+    $('today-total').textContent = 'Could not read today’s logs';
+    $('today-sub').textContent = String(e);
+  }
+}
+
+function renderToday() {
+  const r = recap;
+  const t = r.totals;
+  $('today-total').textContent = r.projects.length ? `${t.time} of agent work` : 'No agent work yet today';
+  $('today-sub').textContent = r.projects.length
+    ? `${t.projects} project${t.projects === 1 ? '' : 's'} · ${t.agents} agent${t.agents === 1 ? '' : 's'} · ${t.commits} commit${t.commits === 1 ? '' : 's'}`
+    : 'Sessions you start today show up here.';
+  $('today-list').replaceChildren(
+    ...r.projects.map((p) => {
+      const li = el('li');
+      const head = el('div', 'p-head');
+      head.append(el('span', 'p-name', p.project), el('span', 'p-time', p.time));
+      const counts = [p.files && `${p.files} file${p.files === 1 ? '' : 's'}`, p.commits.length && `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'}`].filter(Boolean);
+      li.append(head, el('div', 'p-line', [p.agents.join(', '), ...counts].join(' · ')));
+      if (p.titles.length) li.append(el('div', 'p-line', p.titles.join(' · ')));
+      return li;
+    }),
+  );
+  const w = r.waiting;
+  $('today-wait').hidden = !w.length;
+  $('today-wait').textContent = w.length ? `Waiting on you: ${w.map((x) => `${x.title} (${x.waited})`).join(', ')}` : '';
+  $('polished').hidden = !polishedText;
+  $('polished').textContent = polishedText || '';
+  $('copy-recap').disabled = !r.projects.length;
+  $('copy-recap').textContent = polishedText ? 'Copy polished' : 'Copy for standup';
+  $('polish').disabled = !r.projects.length;
+  $('polish').title = prefs.recapWithClaude ? "Rewrites the recap with your own claude command" : 'Turn on "Polish recap with Claude" in Settings';
+}
+
+$('copy-recap').addEventListener('click', async () => {
+  const btn = $('copy-recap');
+  try {
+    await navigator.clipboard.writeText(polishedText || recap.text);
+    btn.textContent = 'Copied';
+  } catch {
+    btn.textContent = 'Copy failed';
+  }
+  setTimeout(renderToday, 1500);
+});
+
+$('polish').addEventListener('click', async () => {
+  if (!prefs.recapWithClaude) {
+    lastView = 'today';
+    setView('settings');
+    $('hotkey-msg').textContent = 'Turn on "Polish recap with Claude" below to use it.';
+    return;
+  }
+  const btn = $('polish');
+  btn.disabled = true;
+  btn.textContent = 'Asking Claude…';
+  try {
+    polishedText = await invoke('polish_recap', { text: recap.text });
+  } catch (e) {
+    $('today-sub').textContent = String(e);
+  } finally {
+    btn.textContent = 'Polish with Claude';
+    renderToday();
+  }
 });
 
 // --- Settings ---
@@ -413,6 +508,7 @@ listen('panel-shown', () => {
   loadLive(); // cheap: keeps the count current on both tabs
   if (view === 'waiting') loadLimits();
   if (view === 'wrapped') load();
+  if (view === 'today') loadToday();
 });
 listen('open-report', async () => {
   if (!cache.get(days)) await load(true);
