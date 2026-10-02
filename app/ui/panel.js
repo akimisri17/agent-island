@@ -2,6 +2,7 @@
 // (synced into ./lib by scripts/sync-lib.mjs) turns them into numbers.
 import { computeStats, filterSessions, filterOptions } from './lib/stats.mjs';
 import { renderHtml, fmtNum, AGENT_NAMES } from './lib/render.mjs';
+import { buildRecap } from './recap.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -14,7 +15,19 @@ let busy = false;
 const filter = { agent: null, maker: null };
 let current = null; // { stats, meta } as shown, for the full report
 let view = 'waiting';
-const HOTKEY_HINT = '⌃⌥J jumps to the longest wait';
+let prefs = { hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false };
+const IS_MAC = /Mac/.test(navigator.platform);
+
+// "ctrl+alt+KeyJ" -> "⌃⌥J" on macOS, "Ctrl+Alt+J" elsewhere.
+function hotkeyLabel(acc) {
+  const mac = { ctrl: '⌃', control: '⌃', alt: '⌥', option: '⌥', shift: '⇧', super: '⌘', cmd: '⌘', command: '⌘', meta: '⌘' };
+  const win = { ctrl: 'Ctrl', control: 'Ctrl', alt: 'Alt', option: 'Alt', shift: 'Shift', super: 'Win', cmd: 'Win', command: 'Win', meta: 'Win' };
+  const parts = acc.split('+');
+  const key = parts.pop().replace(/^Key/, '').replace(/^Digit/, '');
+  const mods = parts.map((m) => (IS_MAC ? mac : win)[m.toLowerCase()] || m);
+  return IS_MAC ? mods.join('') + key : [...mods, key].join('+');
+}
+const hotkeyHint = () => `${hotkeyLabel(prefs.hotkey)} jumps to the longest wait`;
 
 try {
   Object.assign(filter, JSON.parse(localStorage.getItem('filter') || '{}'));
@@ -73,6 +86,7 @@ function liveRow(s) {
   return li;
 }
 
+let lastLive = [];
 async function loadLive() {
   let sessions;
   try {
@@ -81,6 +95,7 @@ async function loadLive() {
     if (view === 'waiting') $('updated').textContent = `Could not list sessions: ${e}`;
     return;
   }
+  lastLive = sessions;
   const waiting = sessions.filter((s) => s.state !== 'working');
   const working = sessions.filter((s) => s.state === 'working');
   $('wcount').textContent = waiting.length ? String(waiting.length) : '';
@@ -94,7 +109,7 @@ async function loadLive() {
   }
   $('live').replaceChildren(...items);
   $('live-empty').hidden = waiting.length > 0;
-  if (view === 'waiting') $('updated').textContent = HOTKEY_HINT;
+  if (view === 'waiting') $('updated').textContent = hotkeyHint();
 }
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -160,17 +175,30 @@ async function loadLimits(force = false) {
 
 function setView(v) {
   view = v;
-  try {
-    localStorage.setItem('view', v);
-  } catch {
-    // not remembered across launches
+  if (v !== 'settings') {
+    try {
+      localStorage.setItem('view', v);
+    } catch {
+      // not remembered across launches
+    }
   }
   for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === v));
-  $('view-waiting').hidden = v !== 'waiting';
-  $('view-wrapped').hidden = v !== 'wrapped';
+  for (const name of ['waiting', 'today', 'wrapped', 'settings']) $(`view-${name}`).hidden = v !== name;
   document.querySelector('.wrapped-only').hidden = v !== 'wrapped';
+  $('gear').setAttribute('aria-pressed', String(v === 'settings'));
+  $('refresh').hidden = v === 'settings';
+  if (v === 'settings') {
+    $('updated').textContent = '';
+    showSettings();
+    return;
+  }
+  if (v === 'today') {
+    $('updated').textContent = '';
+    loadToday();
+    return;
+  }
   if (v === 'waiting') {
-    $('updated').textContent = HOTKEY_HINT;
+    $('updated').textContent = hotkeyHint();
     loadLive();
     loadLimits();
   } else {
@@ -320,20 +348,173 @@ for (const key of ['agent', 'maker']) {
   });
 }
 $('report').addEventListener('click', openReport);
-$('refresh').addEventListener('click', () => (view === 'waiting' ? (loadLive(), loadLimits(true)) : load(true)));
+$('refresh').addEventListener('click', () => {
+  if (view === 'waiting') return loadLive(), loadLimits(true);
+  if (view === 'today') return loadToday(true);
+  return load(true);
+});
 for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => setView(b.dataset.view));
 $('quit').addEventListener('click', () => invoke('quit'));
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.__TAURI__.window.getCurrentWindow().hide();
 });
 
+// --- Today ---
+
+let recap = null;
+let polishedText = null;
+let todayAt = 0;
+
+async function loadToday(force = false) {
+  if (!force && recap && Date.now() - todayAt < 60_000) return renderToday();
+  $('today-total').textContent = recap ? $('today-total').textContent : "Reading today's logs…";
+  try {
+    const [scan] = await Promise.all([invoke('scan_today'), loadLive()]);
+    const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
+    const commits = await invoke('recap_commits', { cwds, since: scan.since }).catch(() => []);
+    recap = buildRecap({ sessions: scan.sessions, commits, live: lastLive });
+    todayAt = Date.now();
+    polishedText = null;
+    renderToday();
+  } catch (e) {
+    $('today-total').textContent = 'Could not read today’s logs';
+    $('today-sub').textContent = String(e);
+  }
+}
+
+function renderToday() {
+  const r = recap;
+  const t = r.totals;
+  $('today-total').textContent = r.projects.length ? `${t.time} of agent work` : 'No agent work yet today';
+  $('today-sub').textContent = r.projects.length
+    ? `${t.projects} project${t.projects === 1 ? '' : 's'} · ${t.agents} agent${t.agents === 1 ? '' : 's'} · ${t.commits} commit${t.commits === 1 ? '' : 's'}`
+    : 'Sessions you start today show up here.';
+  $('today-list').replaceChildren(
+    ...r.projects.map((p) => {
+      const li = el('li');
+      const head = el('div', 'p-head');
+      head.append(el('span', 'p-name', p.project), el('span', 'p-time', p.time));
+      const counts = [p.files && `${p.files} file${p.files === 1 ? '' : 's'}`, p.commits.length && `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'}`].filter(Boolean);
+      li.append(head, el('div', 'p-line', [p.agents.join(', '), ...counts].join(' · ')));
+      if (p.titles.length) li.append(el('div', 'p-line', p.titles.join(' · ')));
+      return li;
+    }),
+  );
+  const w = r.waiting;
+  $('today-wait').hidden = !w.length;
+  $('today-wait').textContent = w.length ? `Waiting on you: ${w.map((x) => `${x.title} (${x.waited})`).join(', ')}` : '';
+  $('polished').hidden = !polishedText;
+  $('polished').textContent = polishedText || '';
+  $('copy-recap').disabled = !r.projects.length;
+  $('copy-recap').textContent = polishedText ? 'Copy polished' : 'Copy for standup';
+  $('polish').disabled = !r.projects.length;
+  $('polish').title = prefs.recapWithClaude ? "Rewrites the recap with your own claude command" : 'Turn on "Polish recap with Claude" in Settings';
+}
+
+$('copy-recap').addEventListener('click', async () => {
+  const btn = $('copy-recap');
+  try {
+    await navigator.clipboard.writeText(polishedText || recap.text);
+    btn.textContent = 'Copied';
+  } catch {
+    btn.textContent = 'Copy failed';
+  }
+  setTimeout(renderToday, 1500);
+});
+
+$('polish').addEventListener('click', async () => {
+  if (!prefs.recapWithClaude) {
+    lastView = 'today';
+    setView('settings');
+    $('hotkey-msg').textContent = 'Turn on "Polish recap with Claude" below to use it.';
+    return;
+  }
+  const btn = $('polish');
+  btn.disabled = true;
+  btn.textContent = 'Asking Claude…';
+  try {
+    polishedText = await invoke('polish_recap', { text: recap.text });
+  } catch (e) {
+    $('today-sub').textContent = String(e);
+  } finally {
+    btn.textContent = 'Polish with Claude';
+    renderToday();
+  }
+});
+
+// --- Settings ---
+
+let lastView = 'waiting';
+function showSettings() {
+  $('hotkey').textContent = hotkeyLabel(prefs.hotkey);
+  $('notify').checked = prefs.notifyLimits;
+  $('recap-claude').checked = prefs.recapWithClaude;
+}
+
+async function saveSettings(next) {
+  try {
+    prefs = await invoke('set_settings', { next: { ...prefs, ...next } });
+    $('hotkey-msg').textContent = '';
+    return true;
+  } catch (e) {
+    $('hotkey-msg').textContent = String(e);
+    return false;
+  } finally {
+    showSettings();
+  }
+}
+
+$('gear').addEventListener('click', () => {
+  if (view === 'settings') return setView(lastView);
+  lastView = view;
+  setView('settings');
+});
+$('back').addEventListener('click', () => setView(lastView));
+$('notify').addEventListener('change', (e) => saveSettings({ notifyLimits: e.target.checked }));
+$('test-notify').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    await invoke('test_notification');
+    $('hotkey-msg').textContent = '';
+  } catch (err) {
+    $('hotkey-msg').textContent = `Could not notify: ${err}`;
+  }
+});
+$('recap-claude').addEventListener('change', (e) => saveSettings({ recapWithClaude: e.target.checked }));
+
+// Click the key, then press a shortcut. Needs a modifier unless it is F1–F24.
+$('hotkey').addEventListener('click', () => {
+  const btn = $('hotkey');
+  btn.classList.add('recording');
+  btn.textContent = 'Press keys…';
+  $('hotkey-msg').textContent = '';
+  const onKey = async (e) => {
+    e.preventDefault();
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return; // wait for the real key
+    document.removeEventListener('keydown', onKey, true);
+    btn.classList.remove('recording');
+    if (e.key === 'Escape') return showSettings();
+    const mods = [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift', e.metaKey && 'super'].filter(Boolean);
+    if (!mods.length && !/^F\d{1,2}$/.test(e.code)) {
+      $('hotkey-msg').textContent = 'Use at least one modifier key, such as ⌃, ⌥, ⇧ or ⌘.';
+      return showSettings();
+    }
+    await saveSettings({ hotkey: [...mods, e.code].join('+') });
+  };
+  document.addEventListener('keydown', onKey, true);
+});
+
 listen('panel-shown', () => {
   loadLive(); // cheap: keeps the count current on both tabs
   if (view === 'waiting') loadLimits();
   if (view === 'wrapped') load();
+  if (view === 'today') loadToday();
 });
 listen('open-report', async () => {
   if (!cache.get(days)) await load(true);
   openReport();
 });
-setView(view);
+invoke('get_settings')
+  .then((p) => (prefs = p))
+  .catch(() => {})
+  .finally(() => setView(view));

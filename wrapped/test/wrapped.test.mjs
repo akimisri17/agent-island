@@ -15,6 +15,7 @@ test('claude: prompts, tokens deduped by message id, edits, limits, compaction',
   const s = await parseClaudeFile(fx('claude-session.jsonl'), { since });
   assert.equal(s.title, 'Fix login bug');
   assert.equal(s.project, 'shop');
+  assert.equal(s.cwd, '/work/shop');
   // tool results and task notifications are not human prompts
   assert.equal(s.prompts.length, 2);
   assert.deepEqual(s.tokens, { input: 15, cacheRead: 3000, cacheWrite: 100, output: 130 });
@@ -35,6 +36,7 @@ test('codex: cumulative tokens, patch files, quota peak, limit hit', async () =>
   const s = await parseCodexFile(fx('codex-rollout.jsonl'), { since });
   assert.equal(s.id, 'c1');
   assert.equal(s.project, 'api');
+  assert.equal(s.cwd, '/work/api');
   assert.equal(s.prompts.length, 2);
   assert.deepEqual(s.tokens, { input: 1500, cacheRead: 4500, cacheWrite: 0, output: 350 });
   assert.deepEqual(s.models, { 'gpt-5.5': 350 });

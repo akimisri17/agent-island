@@ -19,12 +19,14 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/panel-light.png" width="300" alt="Agent Island menu-bar panel: persona, agent-hours, hours agents waited on you, limit hits, peak parallel agents">
-  &nbsp;&nbsp;
-  <img src="docs/media/panel-dark.png" width="300" alt="The same panel in dark mode">
+  <img src="docs/media/panel-waiting.png" width="260" alt="Waiting tab: limits card and the sessions waiting on you, longest first">
+  &nbsp;
+  <img src="docs/media/panel-today-dark.png" width="260" alt="Today tab in dark mode: agent time per project with commits">
+  &nbsp;
+  <img src="docs/media/panel-wrapped.png" width="260" alt="Wrapped tab: persona, badges, agent-hours, hours waited, limit hits">
 </p>
 
-<p align="center"><sub>Screenshots use made-up demo data (<code>--demo</code>).</sub></p>
+<p align="center"><sub>Screenshots use made-up demo data. Project page: <a href="https://akimisri17.github.io/agent-island/">akimisri17.github.io/agent-island</a></sub></p>
 
 ## Why
 
@@ -39,7 +41,7 @@ Usage meters show how much is left right now. Agent Island tracks the sessions t
 
 ### Waiting: press ⌃⌥J
 
-Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that has waited longest for you. The number next to the menu-bar icon shows how many sessions are waiting.
+Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that has waited longest for you. To use a different shortcut, open Settings (the gear in the panel), click the hotkey, and press a new one. The number next to the menu-bar icon shows how many sessions are waiting.
 
 - **Finished:** the agent ended its turn and is waiting for your next message.
 - **Tool running or needs approval:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
@@ -59,8 +61,20 @@ The top of the Waiting tab shows your limits, but only what local data can actua
 - **Claude 5-hour, otherwise:** one dot for each past time you hit the limit, filled once this window has used more than you had used then. For example: *past 7 of your 11 limit hits*.
 - **Codex:** the official `used_percent` and reset time for each window, read from Codex's own logs, plus "full in ~N min" from how fast the percentage is rising.
 - **One suggested move** when you're close: pause one of several working sessions, use a smaller model, or save long runs for after the reset.
+- **Notifications:** at most one per window when you get close, one when a Claude limit is reached, and one when it resets. You can switch them off in Settings, which also has a button to send a test notification.
 
 Why there's no Claude percentage: Claude's logs only record the moment you hit a limit, and the 5-hour limit is shared with claude.ai and desktop chats, which leave no trace on your machine. On real data, usage before a limit hit varied more than 3× from one hit to the next, so any percentage would be invented.
+
+### Today: your daily recap
+
+The **Today** tab shows what agents did today, project by project:
+- time spent, which agents, the session titles, files touched
+- today's git commits in those repos (your own commits, by your git email)
+- what's still waiting on you, and which session to pick up next
+
+**Copy for standup** puts it on your clipboard as plain text.
+
+**Polish with Claude** is optional and off by default. Turn it on in Settings, and it rewrites the recap through *your own* installed `claude` command (`claude -p`), using your plan's usage. This sends today's session titles, project names and file names to Claude. It runs with no tools, without saving a session, and without your user plugins or hooks. It's the only thing in Agent Island that sends anything off your machine, and only when you click it.
 
 ### Wrapped
 
@@ -142,7 +156,7 @@ npm run build -- --bundles app,dmg   # macOS .app and .dmg
 
 ## Privacy
 
-- **Nothing leaves your machine.** No account, no telemetry, no analytics, no server.
+- **Nothing leaves your machine.** No account, no telemetry, no analytics, no server. The one exception is the optional **Polish with Claude** button on the Today tab: it's off until you turn it on, and it uses your own `claude` command.
 - **Read-only.** It reads agent logs and databases without changing them, and it never touches agent settings. SQLite databases are opened so that no files are created next to them; a test checks this.
 - **Not your prompts.** It counts messages and tools and reads timestamps and model names. Prompt text is never stored or shown. The report does show project names and the session titles your agents generate, blurred until you choose to reveal them.
 - **No network.** The app's content security policy blocks network requests, and the HTML report loads no fonts or scripts from anywhere.
@@ -189,10 +203,12 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [ ] Gemini CLI, Copilot CLI, Qwen Code
 - [x] **Waiting**: ⌃⌥J jumps to the session that has waited longest; count in the menu bar
 - [x] Waiting: Cursor chats
-- [ ] Waiting: choose your own hotkey; Windows jump; Antigravity live sessions
+- [x] Settings: choose your own hotkey
+- [ ] Waiting: Windows jump; Antigravity live sessions
 - [x] **Limits**: exact reset when limited, how this window compares with your past limit hits, official Codex percentages, one suggested move
-- [ ] Limits: a notification before the limit, and Claude's weekly limit (no local data for it yet)
-- [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`
+- [x] Limits: notifications when close, when limited, and on reset
+- [ ] Limits: Claude's weekly limit (no local data for it yet)
+- [x] **Today**: daily recap with commits, copy for standup, optional polish by your own `claude -p`
 - [ ] Signed releases, Homebrew, `npx agent-wrapped`
 
 ## Repository layout
@@ -201,7 +217,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 |---|---|
 | `app/` | The desktop app (Tauri): Rust readers, menu-bar panel. See [`app/README.md`](app/README.md) |
 | `wrapped/` | Node readers, stats, personas, report, and the CLI. The app copies the shared code in at build time. See [`wrapped/README.md`](wrapped/README.md) |
-| `docs/media/` | README images, made with `--demo` |
+| `docs/media/` | README and site images, made from demo data |
+| `site/` | Project page, published to GitHub Pages from `main` by `.github/workflows/pages.yml` |
 | `.github/workflows/app.yml` | Tests, then macOS and Windows installers |
 
 ## Contributing
