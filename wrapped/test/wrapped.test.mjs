@@ -144,3 +144,46 @@ test('filters: by agent, by main model maker, and the options offered', async ()
   assert.deepEqual([...opts.agents].sort(), ['claude', 'codex', 'cursor']);
   assert.deepEqual([...opts.makers].sort(), ['Anthropic', 'Cursor', 'OpenAI', 'xAI']);
 });
+
+test('projectOf: worktrees count toward their repository', async () => {
+  const { projectOf } = await import('../src/lines.mjs');
+  assert.equal(projectOf('/u/me/shop'), 'shop');
+  assert.equal(projectOf('/u/me/shop/.worktrees/WO-20260927-005'), 'shop');
+  assert.equal(projectOf('/u/me/erp/worktrees/dashboards'), 'erp');
+  assert.equal(projectOf('/u/me/site/.claude/worktrees/fix-nav'), 'site');
+  assert.equal(projectOf('C:\\work\\api\\.worktrees\\b'), 'api');
+  assert.equal(projectOf(null), null);
+});
+
+test('antigravity: prompt, turn, tools, edits, models from protobuf blobs', async () => {
+  const { parseAntigravityDb } = await import('../src/antigravity.mjs');
+  const s = await parseAntigravityDb(fx('antigravity-conv.db'), { since });
+  assert.equal(s.agent, 'antigravity');
+  assert.equal(s.id, 'antigravity-conv');
+  assert.equal(s.project, 'forge'); // worktree counts toward its repo
+  assert.equal(s.prompts.length, 1);
+  assert.equal(s.turns.length, 1);
+  assert.equal((s.turns[0].end - s.turns[0].start) / 1000, 120);
+  assert.deepEqual(s.tools, { run_command: 1, write_to_file: 1 });
+  assert.deepEqual([...s.filesEdited], ['/work/forge/notes.md']);
+  assert.deepEqual(s.responses, { 'gemini-pro-default': 2, 'gemini-3.8-flash': 1 });
+  assert.equal(s.tokens.output, 0);
+});
+
+test('foreign SQLite: reading a WAL database creates no files next to it', async () => {
+  const { mkdtempSync, copyFileSync, readdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { DatabaseSync } = await import('node:sqlite');
+  const { parseCursorDb } = await import('../src/cursor.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'agent-wrapped-'));
+  const db = join(dir, 'state.vscdb');
+  copyFileSync(fx('cursor-state.vscdb'), db);
+  const w = new DatabaseSync(db);
+  w.exec('PRAGMA journal_mode=WAL');
+  w.close(); // the owning app has quit: no -wal on disk
+  assert.deepEqual(readdirSync(dir), ['state.vscdb']);
+  const sessions = await parseCursorDb(db, { since });
+  assert.equal(sessions.length, 2);
+  assert.deepEqual(readdirSync(dir), ['state.vscdb']);
+});

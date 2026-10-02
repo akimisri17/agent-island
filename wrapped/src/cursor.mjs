@@ -1,4 +1,5 @@
-import { newSession, createTurnTracker, addModel, addResponse, addTool, basename } from './lines.mjs';
+import { projectOf, newSession, createTurnTracker, addModel, addResponse, addTool, basename } from './lines.mjs';
+import { openForeignDb } from './sqlite.mjs';
 
 // Cursor keeps agent chats ("composers") in a SQLite key-value table:
 //   composerData:<id>            one row per chat: name, model, workspace, message headers
@@ -11,20 +12,12 @@ const USER = 1;
 const AGENT = 2;
 
 export async function parseCursorDb(path, { since }) {
-  let DatabaseSync;
-  try {
-    ({ DatabaseSync } = await import('node:sqlite'));
-  } catch {
-    return []; // Node without SQLite support: skip Cursor rather than fail
-  }
-  let db;
-  try {
-    db = new DatabaseSync(path, { readOnly: true });
-  } catch {
-    return [];
-  }
+  const db = await openForeignDb(path);
+  if (!db) return [];
   try {
     return readComposers(db, path, since);
+  } catch {
+    return []; // schema changed: skip Cursor rather than fail
   } finally {
     db.close();
   }
@@ -55,7 +48,7 @@ function readComposers(db, path, since) {
     const id = d.composerId || row.key.slice('composerData:'.length);
     const s = newSession('cursor', id, path);
     s.title = d.name || null;
-    s.project = basename(d.workspaceIdentifier?.uri?.fsPath);
+    s.project = projectOf(d.workspaceIdentifier?.uri?.fsPath);
     s.isSubagent = subagents.has(id) || Boolean(d.isBestOfNSubcomposer);
     const model = cursorModel(d.modelConfig?.modelName);
     const turns = createTurnTracker(s);

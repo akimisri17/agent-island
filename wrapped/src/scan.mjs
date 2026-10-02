@@ -4,6 +4,7 @@ import { join, sep } from 'node:path';
 import { parseClaudeFile } from './claude.mjs';
 import { parseCodexFile } from './codex.mjs';
 import { parseCursorDb } from './cursor.mjs';
+import { listAntigravity, parseAntigravityDb } from './antigravity.mjs';
 
 export function defaultRoots() {
   const home = homedir();
@@ -11,6 +12,7 @@ export function defaultRoots() {
     claude: join(process.env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'projects'),
     codex: join(process.env.CODEX_HOME || join(home, '.codex'), 'sessions'),
     cursor: join(cursorUserDir(home), 'globalStorage', 'state.vscdb'),
+    gemini: process.env.GEMINI_HOME || join(home, '.gemini'),
   };
 }
 
@@ -57,13 +59,15 @@ async function pool(items, limit, fn) {
 }
 
 export async function scan({ since, roots = defaultRoots(), onProgress = () => {} }) {
-  const [claudeFiles, codexFiles] = await Promise.all([
+  const [claudeFiles, codexFiles, agyFiles] = await Promise.all([
     listJsonl(roots.claude, since),
     listJsonl(roots.codex, since),
+    roots.gemini ? listAntigravity(roots.gemini, since) : [],
   ]);
   const jobs = [
     ...claudeFiles.map((f) => ({ ...f, agent: 'claude', isSubagent: f.path.includes(`${sep}subagents${sep}`) })),
     ...codexFiles.map((f) => ({ ...f, agent: 'codex' })),
+    ...agyFiles.map((f) => ({ ...f, agent: 'antigravity' })),
   ];
   let cursorSize = 0;
   try {
@@ -77,9 +81,9 @@ export async function scan({ since, roots = defaultRoots(), onProgress = () => {
   const sessions = await pool(jobs, 8, async (job) => {
     let s = null;
     try {
-      s = job.agent === 'claude'
-        ? await parseClaudeFile(job.path, { since, isSubagent: job.isSubagent })
-        : await parseCodexFile(job.path, { since });
+      if (job.agent === 'claude') s = await parseClaudeFile(job.path, { since, isSubagent: job.isSubagent });
+      else if (job.agent === 'codex') s = await parseCodexFile(job.path, { since });
+      else s = await parseAntigravityDb(job.path, { since });
     } catch {
       // unreadable file: skip it rather than fail the whole report
     }
@@ -94,7 +98,7 @@ export async function scan({ since, roots = defaultRoots(), onProgress = () => {
 
   return {
     sessions: [...sessions, ...cursor].filter((s) => s && s.start !== null),
-    files: { claude: claudeFiles.length, codex: codexFiles.length, cursor: cursorSize ? 1 : 0 },
+    files: { claude: claudeFiles.length, codex: codexFiles.length, cursor: cursorSize ? 1 : 0, antigravity: agyFiles.length },
     bytes: totalBytes,
   };
 }

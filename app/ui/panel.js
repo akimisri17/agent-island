@@ -78,9 +78,9 @@ function render() {
 }
 
 function show({ stats: st, meta, at }) {
-  if (meta.files.claude + meta.files.codex + (meta.files.cursor || 0) === 0) {
+  if (Object.values(meta.files).every((n) => !n)) {
     $('persona').textContent = 'No agent logs yet';
-    $('line').textContent = `Nothing from Claude Code, Codex, or Cursor in the last ${days} days.`;
+    $('line').textContent = `Nothing from Claude Code, Codex, Cursor, or Antigravity in the last ${days} days.`;
     $('badges').replaceChildren();
     $('report').disabled = true;
   } else if (st.sessions === 0) {

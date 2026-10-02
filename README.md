@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>See what your coding agents are doing, and what they cost you. Locally.</b><br>
-  A menu-bar app for people who run Claude Code, Codex, and Cursor all day.
+  A menu-bar app for people who run Claude Code, Codex, Cursor, and Antigravity all day.
 </p>
 
 <p align="center">
@@ -47,7 +47,7 @@ Click the menu-bar icon for a quick panel. Open the full report for the rest.
 - **An agents table**: sessions, prompts, hours, and responses for each agent.
 - **Models grouped by maker** (Anthropic, OpenAI, xAI, Google, …).
 - **Where the tokens went**: by project, by model, cache re-reads, subagents, and context compactions.
-- **Filters**: one agent (Claude Code, Codex, Cursor) or one model maker (Anthropic, OpenAI, xAI, …) at a time, in the panel and the report.
+- **Filters**: one agent (Claude Code, Codex, Cursor, Antigravity) or one model maker (Anthropic, OpenAI, xAI, …) at a time, in the panel and the report.
 - **A share card**: numbers only, with no project names, prompts, or paths.
 
 <p align="center">
@@ -67,8 +67,10 @@ Click the menu-bar icon for a quick panel. Open the full report for the rest.
 | **Claude Code** | `~/.claude/projects/**/*.jsonl` | ✅ | supported |
 | **Codex** | `~/.codex/sessions/**/*.jsonl` | ✅ | supported |
 | **Cursor** | Cursor's local chat database `state.vscdb`, opened read-only | ✗ (Cursor doesn't store them on disk) | supported |
-| Gemini CLI / Antigravity | `~/.gemini` | | next |
-| GitHub Copilot CLI | `~/.copilot` | | next |
+| **Antigravity CLI** | `~/.gemini/antigravity-cli/conversations/*.db`, opened read-only | ✗ (not readable reliably) | supported |
+| Antigravity IDE | `~/.gemini/antigravity-ide` | | not possible: conversations are encrypted |
+| Gemini CLI | `~/.gemini/tmp/*/chats` | | next |
+| GitHub Copilot CLI | `~/.copilot` | | next: needs someone with session data to test |
 | Qwen Code, OpenCode | local session files | | planned |
 
 Any model these agents call shows up automatically: Claude, GPT, Grok, Gemini, Qwen, DeepSeek, and so on. Browser chats (chatgpt.com, grok.com, claude.ai) keep no history on your machine, so they aren't included.
@@ -114,7 +116,7 @@ npm run build -- --bundles app,dmg   # macOS .app and .dmg
 ## Privacy
 
 - **Nothing leaves your machine.** No account, no telemetry, no analytics, no server.
-- **Read-only.** It reads agent logs and Cursor's database without changing them, and it never touches agent settings.
+- **Read-only.** It reads agent logs and databases without changing them, and it never touches agent settings. SQLite databases are opened so that no files are created next to them; a test checks this.
 - **Not your prompts.** It counts messages and tools and reads timestamps and model names. Prompt text is never stored or shown. The report does show project names and the session titles your agents generate, blurred until you choose to reveal them.
 - **No network.** The app's content security policy blocks network requests, and the HTML report loads no fonts or scripts from anywhere.
 - **No screen recording, no Accessibility permission, no keychain access.**
@@ -123,8 +125,8 @@ npm run build -- --bundles app,dmg   # macOS .app and .dmg
 ## How it works
 
 ```
- ~/.claude/projects   ~/.codex/sessions   Cursor state.vscdb
-          \                  |                  /
+ ~/.claude/projects   ~/.codex/sessions   Cursor state.vscdb   ~/.gemini (Antigravity)
+          \                  |                  |                  /
            Rust log readers (app)  ·  Node log readers (CLI)
                              |
             one record per session: prompts, turns,
@@ -137,6 +139,7 @@ npm run build -- --bundles app,dmg   # macOS .app and .dmg
 
 - **Turns:** each prompt you type starts a turn, and the agent's activity extends it. Time from the end of a turn to your next prompt counts as *waiting on you*. Gaps over an hour count as you being away.
 - **Agent-hours** are capped at 3 hours per turn, so a forgotten loop doesn't inflate them. Parallel sessions add up.
+- **Projects** are the folder an agent worked in. Git worktrees count toward their repository.
 - **Sessions you started** are ones with at least one prompt you typed. Plugin-driven and subagent runs count toward tokens only.
 - **Battery:** nothing runs in the background. Logs are read when the app starts and when you open the panel, at most once every 5 minutes. Reading about 6 GB of logs takes about 4 seconds.
 
@@ -144,7 +147,7 @@ The Rust readers and the Node readers are tested against the same sample files, 
 
 ## The honest caveat
 
-None of these agents publish a stable format for their local logs. Agent Island reads what each tool writes for itself, and that can change in any release. When a format changes, a reader may undercount or skip a source. It should never invent numbers. Cursor is the most fragile: it's an internal database, and it has no token counts.
+None of these agents publish a stable format for their local logs. Agent Island reads what each tool writes for itself, and that can change in any release. When a format changes, a reader may undercount or skip a source. It should never invent numbers. Cursor and Antigravity are the most fragile: Cursor is an internal database, and Antigravity stores undocumented binary (protobuf) records. Neither gives token counts we can trust.
 
 Windows installers build in CI, but the app hasn't been run on a real Windows machine yet. Reports from Windows users are very welcome.
 
@@ -154,7 +157,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 
 - [x] **Wrapped**: report, persona and badges, share card, menu-bar panel
 - [x] Claude Code, Codex, and Cursor
-- [ ] Gemini CLI / Antigravity, Copilot CLI, Qwen Code
+- [x] Antigravity CLI
+- [ ] Gemini CLI, Copilot CLI, Qwen Code
 - [ ] **Waiting**: one hotkey to jump to the session that has waited longest, in whatever terminal it's in
 - [ ] **Limit coach**: warn before the weekly limit, with one suggested move (pause a session, switch model, wait for the reset)
 - [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`

@@ -84,6 +84,20 @@ export function addTool(session, name) {
   session.tools[name] = (session.tools[name] || 0) + 1;
 }
 
+// The project a working directory belongs to. Git worktrees count toward
+// their repository: /repo/.worktrees/feature-x and /repo/.claude/worktrees/y
+// are both "repo".
+export function projectOf(cwd) {
+  if (!cwd) return null;
+  const parts = cwd.split(/[\\/]/).filter(Boolean);
+  const wt = parts.findIndex((p) => p === '.worktrees' || p === 'worktrees');
+  if (wt > 0) {
+    const repo = parts.slice(0, wt).filter((p) => p !== '.claude');
+    return repo[repo.length - 1] || null;
+  }
+  return parts[parts.length - 1] || null;
+}
+
 // Splits on both separators: logs written on Windows carry paths like C:\work\shop.
 export function basename(p) {
   if (!p) return null;
