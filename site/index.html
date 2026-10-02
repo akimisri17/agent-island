@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Island — know which coding agent is waiting on you</title>
+<meta name="description" content="A free, local menu-bar app for Claude Code, Codex, Cursor and Antigravity: which session is waiting on you, where you stand on usage limits, and what got done today. Nothing leaves your machine.">
+<meta property="og:title" content="Agent Island">
+<meta property="og:description" content="Know which coding agent is waiting on you. Free, local, open source.">
+<meta property="og:image" content="media/share-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="media/icon.png">
+<style>
+:root {
+  --bg: #f6f4ef; --panel: #ffffff; --ink: #1b1a17; --muted: #6d6a62; --line: #e4e0d6;
+  --accent: #c2410c; --accent-soft: #fbe3d6; --code: #efece4;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #121110; --panel: #1b1a18; --ink: #efece4; --muted: #9c978b; --line: #2c2a26;
+    --accent: #fb923c; --accent-soft: #3a2316; --code: #24221f; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", "Helvetica Neue", sans-serif; }
+a { color: inherit; }
+img { max-width: 100%; height: auto; display: block; }
+code { font: 0.9em ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: var(--code); padding: 1px 6px; border-radius: 5px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 16px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; letter-spacing: -.01em; }
+.brand img { width: 28px; height: 28px; border-radius: 7px; }
+.links { display: flex; align-items: center; gap: 22px; font-size: 15px; }
+.links a { text-decoration: none; color: var(--muted); }
+.links a:hover { color: var(--ink); }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px; font-weight: 600; text-decoration: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.small { padding: 7px 13px; font-size: 14px; }
+.links .btn.small { color: var(--bg); }
+
+.hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; padding: 72px 0 56px; }
+.eyebrow { color: var(--muted); font-size: 14px; letter-spacing: .04em; text-transform: uppercase; margin: 0 0 14px; }
+h1 { font-size: clamp(38px, 5.4vw, 60px); line-height: 1.04; letter-spacing: -.03em; margin: 0 0 18px; }
+h1 em { font-style: normal; color: var(--accent); }
+.lede { font-size: 19px; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.try { margin-top: 18px; font-size: 14px; color: var(--muted); }
+.stack { position: relative; min-height: 520px; }
+.stack img { position: absolute; width: 60%; border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0,0,0,.14); }
+.stack img:first-child { left: 0; top: 0; z-index: 2; }
+.stack img:last-child { right: 0; top: 96px; z-index: 1; }
+
+section { padding: 64px 0; border-top: 1px solid var(--line); }
+h2 { font-size: clamp(28px, 3.4vw, 38px); letter-spacing: -.02em; line-height: 1.12; margin: 0 0 14px; }
+.kicker { color: var(--accent); font-weight: 600; font-size: 14px; letter-spacing: .03em; text-transform: uppercase; margin: 0 0 10px; }
+.feature { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+.feature.flip .shot { order: 2; }
+.feature .shot img { border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 14px 40px rgba(0,0,0,.10); max-width: 360px; margin: 0 auto; }
+.feature .shot.wide img { max-width: 100%; }
+.feature p { color: var(--muted); margin: 0 0 14px; }
+.feature ul { margin: 0; padding-left: 20px; color: var(--muted); }
+.feature li { margin: 6px 0; }
+.feature li b { color: var(--ink); font-weight: 600; }
+kbd { font: 600 .85em -apple-system, "Segoe UI", sans-serif; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; background: var(--panel); color: var(--ink); }
+
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+td.c { text-align: center; }
+.yes { color: var(--accent); font-weight: 700; }
+.no { color: var(--muted); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 4px 8px; }
+
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 28px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.card h3 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+.steps { counter-reset: s; list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 14px; }
+.steps li { counter-increment: s; position: relative; padding-left: 44px; color: var(--muted); }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: -2px; width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; display: grid; place-items: center; }
+.steps li b { color: var(--ink); }
+.note { margin-top: 22px; padding: 14px 18px; border-radius: 12px; background: var(--accent-soft); font-size: 15px; }
+
+footer { padding: 40px 0 56px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+@media (max-width: 860px) {
+  .hero, .feature { grid-template-columns: 1fr; gap: 32px; }
+  .feature.flip .shot { order: 0; }
+  .stack { min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stack img { position: static; width: 100%; }
+  .grid { grid-template-columns: 1fr; }
+  .links a:not(.btn) { display: none; }
+  .hero { padding-top: 44px; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="media/icon.png" alt="">Agent Island</a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#agents">Agents</a>
+      <a href="#privacy">Privacy</a>
+      <a href="https://github.com/akimisri17/agent-island">GitHub</a>
+      <a class="btn small primary" href="#install">Download</a>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap">
+  <header class="hero">
+    <div>
+      <p class="eyebrow">Free · Open source · macOS &amp; Windows</p>
+      <h1>Know which agent is <em>waiting on you.</em></h1>
+      <p class="lede">A menu-bar app for people who run Claude Code, Codex, Cursor and Antigravity all day. It shows which session needs you, where you stand against your usage limits, and what got done today. Nothing leaves your machine.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Download for macOS or Windows</a>
+        <a class="btn" href="https://github.com/akimisri17/agent-island">View on GitHub</a>
+      </div>
+      <p class="try">Or try the report without installing: <code>node wrapped/bin/agent-wrapped.mjs --demo</code></p>
+    </div>
+    <div class="stack">
+      <img src="media/panel-waiting.png" alt="Waiting tab: limits card and three sessions waiting on you, longest first" width="680" height="924">
+      <img src="media/panel-today-dark.png" alt="Today tab in dark mode: agent time per project with commits" width="680" height="924">
+    </div>
+  </header>
+</main>
+
+<section id="features">
+  <div class="wrap feature">
+    <div class="shot"><img src="media/panel-waiting.png" alt="Waiting tab with sessions sorted by longest wait" loading="lazy" width="680" height="924"></div>
+    <div>
+      <p class="kicker">Waiting</p>
+      <h2>One key to the session that needs you</h2>
+      <p>Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>J</kbd> from anywhere and the session that has waited longest comes to the front. The count next to the menu-bar icon tells you how many are waiting.</p>
+      <ul>
+        <li><b>Finished</b>: the agent ended its turn and is waiting for your next message.</li>
+        <li><b>Tool running or needs approval</b>: a tool call has gone more than 20 seconds without a result.</li>
+        <li>Lands on the exact Terminal or iTerm tab, the right VS Code or Cursor window, or the Claude app.</li>
+        <li>Choose your own shortcut in Settings.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap feature flip">
+    <div class="shot"><img src="media/panel-waiting-dark.png" alt="Limits card: past 7 of your 11 limit hits, Codex 72% used" loading="lazy" width="680" height="924"></div>
+    <div>
+      <p class="kicker">Limits</p>
+      <h2>Where you stand, without made-up numbers</h2>
+      <p>Claude's logs only record the moment you hit a limit, and the limit is shared with claude.ai and desktop chats, which leave no trace on your machine. So instead of a guessed percentage you get what is actually known.</p>
+      <ul>
+        <li><b>When you're limited:</b> the exact reset time Claude logged.</li>
+        <li><b>Otherwise:</b> how this window compares with the usage before your past limit hits.</li>
+        <li><b>Codex:</b> the official percentage used, with "full in about N minutes".</li>
+        <li><b>One suggested move</b> when you're close, and a notification once per window.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap feature">
+    <div class="shot"><img src="media/panel-today.png" alt="Today tab: agent time per project, files, commits, and what's waiting" loading="lazy" width="680" height="924"></div>
+    <div>
+      <p class="kicker">Today</p>
+      <h2>Your standup, already written</h2>
+      <p>What agents did today, project by project: time, which agents, session titles, files touched, and the day's git commits. Plus what is still waiting and which session to pick up next.</p>
+      <ul>
+        <li><b>Copy for standup</b> puts it on your clipboard as plain text.</li>
+        <li><b>Polish with Claude</b> (optional, off by default) rewrites it through your own <code>claude</code> command.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap feature flip">
+    <div class="shot wide"><img src="media/share-card.png" alt="Share card: I am The Conductor, with agent-hours, sessions, files, peak parallel agents, hours waited and limit hits" loading="lazy" width="1200" height="630"></div>
+    <div>
+      <p class="kicker">Wrapped</p>
+      <h2>Your last 30 days with agents</h2>
+      <p>Agent-hours, hours your agents waited on you, limit hits, peak parallel agents, models by maker, and where the tokens went. You get one of 19 personas with two badges, and a share card that holds numbers only.</p>
+      <ul>
+        <li>Filter by agent or by model maker: Anthropic, OpenAI, xAI, Google.</li>
+        <li>A full HTML report opens in your browser and stays on your machine.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="agents">
+  <div class="wrap">
+    <p class="kicker">Agents</p>
+    <h2>Works with the agents you already use</h2>
+    <p class="lede" style="margin-bottom:24px">Any model those agents call shows up automatically: Claude, GPT, Grok, Gemini, Qwen, DeepSeek.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Agent</th><th>Waiting</th><th>Today &amp; Wrapped</th><th>Tokens</th></tr></thead>
+        <tbody>
+          <tr><td><b>Claude Code</b><br><span class="no">terminal, VS Code, Claude desktop app</span></td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
+          <tr><td><b>Codex</b></td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
+          <tr><td><b>Cursor</b></td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c no">not stored locally</td></tr>
+          <tr><td><b>Antigravity CLI</b></td><td class="c no">–</td><td class="c yes">✓</td><td class="c no">not readable</td></tr>
+          <tr><td>Gemini CLI, Copilot, Qwen Code</td><td class="c no" colspan="3">on the roadmap</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <div class="wrap">
+    <p class="kicker">Privacy</p>
+    <h2>It lives on your laptop</h2>
+    <div class="grid">
+      <div class="card"><h3>Nothing is sent</h3><p>No account, telemetry, analytics or server. The one exception is the optional recap polish, which uses your own <code>claude</code> command and only runs when you click it.</p></div>
+      <div class="card"><h3>Read-only</h3><p>It reads agent logs and databases without changing them, and it never writes files next to them. A test checks that.</p></div>
+      <div class="card"><h3>Not your prompts</h3><p>It counts messages, tools and time. Prompt text is never stored or shown.</p></div>
+      <div class="card"><h3>No special permissions</h3><p>No screen recording, Accessibility or keychain access. Jumping to a Terminal tab asks once to control that app.</p></div>
+      <div class="card"><h3>Light on battery</h3><p>Nothing animates. A quick check runs once a minute (about 35 ms), and the full read only happens when you open the panel.</p></div>
+      <div class="card"><h3>Open source</h3><p>MIT licensed. Read every line on GitHub, and build it yourself if you prefer.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <p class="kicker">Install</p>
+    <h2>Get Agent Island</h2>
+    <ol class="steps">
+      <li><b>Download</b> the installer for your system from the <a href="https://github.com/akimisri17/agent-island/releases">Releases page</a>: a <code>.dmg</code> for macOS (Apple silicon or Intel), or a <code>.msi</code> or <code>.exe</code> for Windows.</li>
+      <li><b>Open it once.</b> The builds are not signed yet. On macOS, right-click <b>Agent Island.app</b>, choose <b>Open</b>, then <b>Open</b> again. On Windows, click <b>More info</b> and then <b>Run anyway</b>.</li>
+      <li><b>Click the icon</b> in your menu bar or system tray, or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>J</kbd>.</li>
+    </ol>
+    <p class="note">Prefer to build it yourself? You need Node 20+ and Rust. <a href="https://github.com/akimisri17/agent-island#build-from-source">Instructions are in the README</a>.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Agent Island · MIT © 2026 Akhil Misri</span>
+    <span><a href="https://github.com/akimisri17/agent-island">GitHub</a> · <a href="https://github.com/akimisri17/agent-island/issues">Report an issue</a></span>
+  </div>
+</footer>
+</body>
+</html>

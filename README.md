@@ -19,12 +19,14 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/panel-light.png" width="300" alt="Agent Island menu-bar panel: persona, agent-hours, hours agents waited on you, limit hits, peak parallel agents">
-  &nbsp;&nbsp;
-  <img src="docs/media/panel-dark.png" width="300" alt="The same panel in dark mode">
+  <img src="docs/media/panel-waiting.png" width="260" alt="Waiting tab: limits card and the sessions waiting on you, longest first">
+  &nbsp;
+  <img src="docs/media/panel-today-dark.png" width="260" alt="Today tab in dark mode: agent time per project with commits">
+  &nbsp;
+  <img src="docs/media/panel-wrapped.png" width="260" alt="Wrapped tab: persona, badges, agent-hours, hours waited, limit hits">
 </p>
 
-<p align="center"><sub>Screenshots use made-up demo data (<code>--demo</code>).</sub></p>
+<p align="center"><sub>Screenshots use made-up demo data. Project page: <a href="https://akimisri17.github.io/agent-island/">akimisri17.github.io/agent-island</a></sub></p>
 
 ## Why
 
@@ -215,7 +217,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 |---|---|
 | `app/` | The desktop app (Tauri): Rust readers, menu-bar panel. See [`app/README.md`](app/README.md) |
 | `wrapped/` | Node readers, stats, personas, report, and the CLI. The app copies the shared code in at build time. See [`wrapped/README.md`](wrapped/README.md) |
-| `docs/media/` | README images, made with `--demo` |
+| `docs/media/` | README and site images, made from demo data |
+| `site/` | Project page, published to GitHub Pages from `main` by `.github/workflows/pages.yml` |
 | `.github/workflows/app.yml` | Tests, then macOS and Windows installers |
 
 ## Contributing
