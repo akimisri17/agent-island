@@ -47,7 +47,7 @@ Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that h
   - Terminal and iTerm: the exact tab.
   - VS Code, Cursor, Windsurf, Zed: the window for that folder.
   - Anything else, such as the Claude desktop app, Ghostty or Warp: the app comes to the front.
-- **Covers** running Claude Code and Codex sessions. Plugin- and script-driven sessions are left out.
+- **Covers** running Claude Code and Codex sessions, and Cursor chats. Cursor runs every chat inside one app, so while Cursor is open, chats active in the last 12 hours count as live. Cursor also says whether you've read the reply yet. Plugin- and script-driven sessions are left out.
 
 The Waiting tab lists the same sessions, longest wait first. Click one to jump to it.
 
@@ -177,7 +177,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [x] Antigravity CLI
 - [ ] Gemini CLI, Copilot CLI, Qwen Code
 - [x] **Waiting**: ⌃⌥J jumps to the session that has waited longest; count in the menu bar
-- [ ] Waiting: choose your own hotkey; Windows jump; Cursor and Antigravity live sessions
+- [x] Waiting: Cursor chats
+- [ ] Waiting: choose your own hotkey; Windows jump; Antigravity live sessions
 - [ ] **Limit coach**: warn before the weekly limit, with one suggested move (pause a session, switch model, wait for the reset)
 - [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`
 - [ ] Signed releases, Homebrew, `npx agent-wrapped`
