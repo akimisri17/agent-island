@@ -39,7 +39,7 @@ Usage meters show how much is left right now. Agent Island tracks the sessions t
 
 ### Waiting: press ⌃⌥J
 
-Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that has waited longest for you. The number next to the menu-bar icon shows how many sessions are waiting.
+Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that has waited longest for you. To use a different shortcut, open Settings (the gear in the panel), click the hotkey, and press a new one. The number next to the menu-bar icon shows how many sessions are waiting.
 
 - **Finished:** the agent ended its turn and is waiting for your next message.
 - **Tool running or needs approval:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
@@ -189,7 +189,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [ ] Gemini CLI, Copilot CLI, Qwen Code
 - [x] **Waiting**: ⌃⌥J jumps to the session that has waited longest; count in the menu bar
 - [x] Waiting: Cursor chats
-- [ ] Waiting: choose your own hotkey; Windows jump; Antigravity live sessions
+- [x] Settings: choose your own hotkey
+- [ ] Waiting: Windows jump; Antigravity live sessions
 - [x] **Limits**: exact reset when limited, how this window compares with your past limit hits, official Codex percentages, one suggested move
 - [ ] Limits: a notification before the limit, and Claude's weekly limit (no local data for it yet)
 - [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`

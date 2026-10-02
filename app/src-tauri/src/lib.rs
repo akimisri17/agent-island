@@ -4,6 +4,7 @@ pub mod foreign;
 pub mod limits;
 pub mod live;
 pub mod logs;
+pub mod settings;
 
 use tauri::{
     image::Image,
@@ -11,6 +12,8 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, WindowEvent,
 };
+use std::sync::Mutex;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_positioner::{Position, WindowExt};
 
@@ -124,7 +127,35 @@ fn set_badge(app: &AppHandle, waiting: usize) {
     }
 }
 
-const HOTKEY: &str = "ctrl+alt+KeyJ";
+struct Prefs(Mutex<settings::Settings>);
+
+fn config_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> settings::Settings {
+    app.state::<Prefs>().0.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+/// Saves settings. A new hotkey is registered before the old one is
+/// released, so a hotkey taken by another app leaves the old one working.
+#[tauri::command]
+fn set_settings(app: AppHandle, next: settings::Settings) -> Result<settings::Settings, String> {
+    let prefs = app.state::<Prefs>();
+    let current = prefs.0.lock().map_err(|e| e.to_string())?.clone();
+    if next.hotkey != current.hotkey {
+        let new: Shortcut = next.hotkey.parse().map_err(|_| format!("\"{}\" is not a valid shortcut", next.hotkey))?;
+        let gs = app.global_shortcut();
+        gs.register(new).map_err(|_| "That shortcut is taken by another app. Try another.".to_string())?;
+        if let Ok(old) = current.hotkey.parse::<Shortcut>() {
+            let _ = gs.unregister(old);
+        }
+    }
+    settings::save(&config_dir(&app)?, &next).map_err(|e| e.to_string())?;
+    *prefs.0.lock().map_err(|e| e.to_string())? = next.clone();
+    Ok(next)
+}
 
 fn toggle_panel(app: &AppHandle) {
     let Some(w) = app.get_webview_window(PANEL) else { return };
@@ -152,18 +183,24 @@ pub fn run() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
+            // One handler for whichever shortcut is registered: the app only ever has one.
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([HOTKEY])
-                .expect("valid hotkey")
                 .with_handler(|app, _shortcut, event| {
-                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                    if event.state == ShortcutState::Pressed {
                         jump_to_longest_wait(app);
                     }
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings])
         .setup(|app| {
+            let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
+            let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");
+            if let Err(e) = app.global_shortcut().register(hotkey) {
+                eprintln!("agent-island: could not register hotkey {}: {e}", prefs.hotkey);
+            }
+            app.manage(Prefs(Mutex::new(prefs)));
+
             // Menu-bar only: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);

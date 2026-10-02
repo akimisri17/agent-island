@@ -14,7 +14,19 @@ let busy = false;
 const filter = { agent: null, maker: null };
 let current = null; // { stats, meta } as shown, for the full report
 let view = 'waiting';
-const HOTKEY_HINT = '⌃⌥J jumps to the longest wait';
+let prefs = { hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false };
+const IS_MAC = /Mac/.test(navigator.platform);
+
+// "ctrl+alt+KeyJ" -> "⌃⌥J" on macOS, "Ctrl+Alt+J" elsewhere.
+function hotkeyLabel(acc) {
+  const mac = { ctrl: '⌃', control: '⌃', alt: '⌥', option: '⌥', shift: '⇧', super: '⌘', cmd: '⌘', command: '⌘', meta: '⌘' };
+  const win = { ctrl: 'Ctrl', control: 'Ctrl', alt: 'Alt', option: 'Alt', shift: 'Shift', super: 'Win', cmd: 'Win', command: 'Win', meta: 'Win' };
+  const parts = acc.split('+');
+  const key = parts.pop().replace(/^Key/, '').replace(/^Digit/, '');
+  const mods = parts.map((m) => (IS_MAC ? mac : win)[m.toLowerCase()] || m);
+  return IS_MAC ? mods.join('') + key : [...mods, key].join('+');
+}
+const hotkeyHint = () => `${hotkeyLabel(prefs.hotkey)} jumps to the longest wait`;
 
 try {
   Object.assign(filter, JSON.parse(localStorage.getItem('filter') || '{}'));
@@ -94,7 +106,7 @@ async function loadLive() {
   }
   $('live').replaceChildren(...items);
   $('live-empty').hidden = waiting.length > 0;
-  if (view === 'waiting') $('updated').textContent = HOTKEY_HINT;
+  if (view === 'waiting') $('updated').textContent = hotkeyHint();
 }
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -160,17 +172,25 @@ async function loadLimits(force = false) {
 
 function setView(v) {
   view = v;
-  try {
-    localStorage.setItem('view', v);
-  } catch {
-    // not remembered across launches
+  if (v !== 'settings') {
+    try {
+      localStorage.setItem('view', v);
+    } catch {
+      // not remembered across launches
+    }
   }
   for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === v));
-  $('view-waiting').hidden = v !== 'waiting';
-  $('view-wrapped').hidden = v !== 'wrapped';
+  for (const name of ['waiting', 'wrapped', 'settings']) $(`view-${name}`).hidden = v !== name;
   document.querySelector('.wrapped-only').hidden = v !== 'wrapped';
+  $('gear').setAttribute('aria-pressed', String(v === 'settings'));
+  $('refresh').hidden = v === 'settings';
+  if (v === 'settings') {
+    $('updated').textContent = '';
+    showSettings();
+    return;
+  }
   if (v === 'waiting') {
-    $('updated').textContent = HOTKEY_HINT;
+    $('updated').textContent = hotkeyHint();
     loadLive();
     loadLimits();
   } else {
@@ -327,6 +347,59 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.__TAURI__.window.getCurrentWindow().hide();
 });
 
+// --- Settings ---
+
+let lastView = 'waiting';
+function showSettings() {
+  $('hotkey').textContent = hotkeyLabel(prefs.hotkey);
+  $('notify').checked = prefs.notifyLimits;
+  $('recap-claude').checked = prefs.recapWithClaude;
+}
+
+async function saveSettings(next) {
+  try {
+    prefs = await invoke('set_settings', { next: { ...prefs, ...next } });
+    $('hotkey-msg').textContent = '';
+    return true;
+  } catch (e) {
+    $('hotkey-msg').textContent = String(e);
+    return false;
+  } finally {
+    showSettings();
+  }
+}
+
+$('gear').addEventListener('click', () => {
+  if (view === 'settings') return setView(lastView);
+  lastView = view;
+  setView('settings');
+});
+$('back').addEventListener('click', () => setView(lastView));
+$('notify').addEventListener('change', (e) => saveSettings({ notifyLimits: e.target.checked }));
+$('recap-claude').addEventListener('change', (e) => saveSettings({ recapWithClaude: e.target.checked }));
+
+// Click the key, then press a shortcut. Needs a modifier unless it is F1–F24.
+$('hotkey').addEventListener('click', () => {
+  const btn = $('hotkey');
+  btn.classList.add('recording');
+  btn.textContent = 'Press keys…';
+  $('hotkey-msg').textContent = '';
+  const onKey = async (e) => {
+    e.preventDefault();
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return; // wait for the real key
+    document.removeEventListener('keydown', onKey, true);
+    btn.classList.remove('recording');
+    if (e.key === 'Escape') return showSettings();
+    const mods = [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift', e.metaKey && 'super'].filter(Boolean);
+    if (!mods.length && !/^F\d{1,2}$/.test(e.code)) {
+      $('hotkey-msg').textContent = 'Use at least one modifier key, such as ⌃, ⌥, ⇧ or ⌘.';
+      return showSettings();
+    }
+    await saveSettings({ hotkey: [...mods, e.code].join('+') });
+  };
+  document.addEventListener('keydown', onKey, true);
+});
+
 listen('panel-shown', () => {
   loadLive(); // cheap: keeps the count current on both tabs
   if (view === 'waiting') loadLimits();
@@ -336,4 +409,7 @@ listen('open-report', async () => {
   if (!cache.get(days)) await load(true);
   openReport();
 });
-setView(view);
+invoke('get_settings')
+  .then((p) => (prefs = p))
+  .catch(() => {})
+  .finally(() => setView(view));
