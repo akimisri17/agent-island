@@ -15,8 +15,9 @@ Options: `--days 7`, `--agent claude|codex|cursor`, `--maker Anthropic|OpenAI|xA
 | Claude Code | `~/.claude/projects/**/*.jsonl` (or `$CLAUDE_CONFIG_DIR/projects`) |
 | Codex | `~/.codex/sessions/**/*.jsonl` (or `$CODEX_HOME/sessions`) |
 | Cursor | `Cursor/User/globalStorage/state.vscdb`, read-only (needs Node 22.13+ for `node:sqlite`; skipped otherwise) |
+| Antigravity CLI | `~/.gemini/antigravity-cli/conversations/*.db` (or `$GEMINI_HOME`), read-only, same Node requirement |
 
-Cursor stores no token counts locally, so models are compared by number of responses. Gemini, Copilot, and Qwen Code are not read yet.
+Cursor and Antigravity have no usable token counts, so models are compared by number of responses. Gemini CLI, Copilot, and Qwen Code are not read yet.
 
 ## What the numbers mean
 

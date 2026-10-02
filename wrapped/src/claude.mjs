@@ -1,4 +1,4 @@
-import { readJsonl, newSession, createTurnTracker, addModel, addResponse, addTool, basename } from './lines.mjs';
+import { projectOf, readJsonl, newSession, createTurnTracker, addModel, addResponse, addTool, basename } from './lines.mjs';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const NOT_HUMAN_PREFIXES = ['<local-command', '<task-notification', '[SYSTEM', '<system-reminder'];
@@ -19,7 +19,7 @@ export async function parseClaudeFile(path, { since, isSubagent = false } = {}) 
     if (!d.timestamp) continue;
     const ts = Date.parse(d.timestamp);
     if (Number.isNaN(ts) || ts < since) continue;
-    if (d.cwd && !s.project) s.project = basename(d.cwd);
+    if (d.cwd && !s.project) s.project = projectOf(d.cwd);
 
     if (d.quotaLimits?.status === 'rejected') {
       const key = `${d.quotaLimits.rateLimitType}:${d.quotaLimits.resetsAt}`;

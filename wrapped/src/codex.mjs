@@ -1,4 +1,4 @@
-import { readJsonl, newSession, createTurnTracker, addModel, addResponse, addTool, basename } from './lines.mjs';
+import { projectOf, readJsonl, newSession, createTurnTracker, addModel, addResponse, addTool, basename } from './lines.mjs';
 
 const PATCH_FILE = /^\*\*\* (?:Update|Add) File: (.+)$/gm;
 
@@ -14,7 +14,7 @@ export async function parseCodexFile(path, { since } = {}) {
     const p = d.payload || {};
     if (d.type === 'session_meta') {
       if (p.id) s.id = p.id;
-      if (p.cwd) s.project = basename(p.cwd);
+      if (p.cwd) s.project = projectOf(p.cwd);
       continue;
     }
     if (d.type === 'turn_context' && p.model) model = p.model;

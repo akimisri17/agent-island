@@ -17,7 +17,7 @@ Nothing runs in the background. Logs are read when the panel opens, and again af
 
 | Part | Where | Job |
 |---|---|---|
-| Log readers | `src-tauri/src/logs.rs`, `cursor.rs` | Rust ports of `wrapped/src/claude.mjs`, `codex.mjs`, `cursor.mjs`. Reads about 6 GB in about 4 s |
+| Log readers | `src-tauri/src/logs.rs`, `cursor.rs`, `antigravity.rs`, `foreign.rs` | Rust ports of `wrapped/src/claude.mjs`, `codex.mjs`, `cursor.mjs`, `antigravity.mjs`, `sqlite.mjs`, `protobuf.mjs`. Reads about 6 GB in about 4 s |
 | Stats, personas, report | `ui/lib/` (copied from `wrapped/src/`) | The same code the CLI uses. Do not edit the copies |
 | Panel | `ui/index.html`, `panel.js`, `panel.css` | The popover |
 | Shell | `src-tauri/src/lib.rs` | Tray icon, popover window, `scan` and `open_report` commands |
@@ -31,8 +31,9 @@ Nothing runs in the background. Logs are read when the panel opens, and again af
 | Claude Code | `~/.claude/projects/**/*.jsonl` | yes |
 | Codex | `~/.codex/sessions/**/*.jsonl` | yes |
 | Cursor | `Cursor/User/globalStorage/state.vscdb` (SQLite, read-only) | not stored locally |
+| Antigravity CLI | `~/.gemini/antigravity-cli/conversations/*.db` (SQLite + protobuf, read-only) | not reliably readable |
 
-Models are compared by number of responses, since Cursor has no local token counts. Gemini, Copilot, and Qwen Code are next.
+Models are compared by number of responses, since Cursor and Antigravity have no usable token counts. Other apps' SQLite files are opened immutable unless the owner app is live, so nothing is written next to them. Gemini CLI, Copilot, and Qwen Code are next.
 
 ## Run and build
 
