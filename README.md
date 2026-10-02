@@ -51,6 +51,17 @@ Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that h
 
 The Waiting tab lists the same sessions, longest wait first. Click one to jump to it.
 
+### Limits: where you stand, without made-up numbers
+
+The top of the Waiting tab shows your limits, but only what local data can actually back up:
+
+- **Claude 5-hour, when you're limited:** the exact reset time, taken from the rejection Claude itself logged.
+- **Claude 5-hour, otherwise:** one dot for each past time you hit the limit, filled once this window has used more than you had used then. For example: *past 7 of your 11 limit hits*.
+- **Codex:** the official `used_percent` and reset time for each window, read from Codex's own logs, plus "full in ~N min" from how fast the percentage is rising.
+- **One suggested move** when you're close: pause one of several working sessions, use a smaller model, or save long runs for after the reset.
+
+Why there's no Claude percentage: Claude's logs only record the moment you hit a limit, and the 5-hour limit is shared with claude.ai and desktop chats, which leave no trace on your machine. On real data, usage before a limit hit varied more than 3× from one hit to the next, so any percentage would be invented.
+
 ### Wrapped
 
 Click the menu-bar icon and switch to **Wrapped** for a quick panel. Open the full report for the rest.
@@ -179,7 +190,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [x] **Waiting**: ⌃⌥J jumps to the session that has waited longest; count in the menu bar
 - [x] Waiting: Cursor chats
 - [ ] Waiting: choose your own hotkey; Windows jump; Antigravity live sessions
-- [ ] **Limit coach**: warn before the weekly limit, with one suggested move (pause a session, switch model, wait for the reset)
+- [x] **Limits**: exact reset when limited, how this window compares with your past limit hits, official Codex percentages, one suggested move
+- [ ] Limits: a notification before the limit, and Claude's weekly limit (no local data for it yet)
 - [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`
 - [ ] Signed releases, Homebrew, `npx agent-wrapped`
 

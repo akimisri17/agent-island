@@ -97,6 +97,67 @@ async function loadLive() {
   if (view === 'waiting') $('updated').textContent = HOTKEY_HINT;
 }
 
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const windowName = (m) => (m === 300 ? '5-hour' : m === 10080 ? 'weekly' : m ? `${Math.round(m / 60)}-hour` : '');
+
+let limitsAt = 0;
+async function loadLimits(force = false) {
+  if (!force && Date.now() - limitsAt < 60_000) return;
+  limitsAt = Date.now();
+  let l;
+  try {
+    l = await invoke('limits');
+  } catch {
+    return; // limits are a nice-to-have; the session list still works
+  }
+  const box = $('limits');
+  const rows = [];
+  let tone = '';
+  const c = l.claude;
+  if (c) {
+    tone = c.risk;
+    const status =
+      c.risk === 'limited' ? `Limit reached · resets ${clock(c.limitedUntil)}`
+      : c.windowResets ? `Window resets about ${clock(c.windowResets)}`
+      : 'No usage in the last 5 hours';
+    const row = el('div', 'limit-row');
+    row.append(el('span', 'limit-name', 'Claude 5-hour'), el('span', 'limit-status', status));
+    rows.push(row);
+    if (c.pastHits > 0 && c.risk !== 'limited') {
+      // One dot per past limit hit; filled once this window has passed the
+      // usage that came before it. No percentage: the limit is shared with
+      // claude.ai, which leaves no local trace.
+      const hits = el('div', 'hits');
+      hits.title = 'Each dot is a past time you hit the 5-hour limit. Filled: this window has already used more than you had used then.';
+      for (let i = 0; i < c.pastHits; i++) hits.append(el('i', i < c.passed ? 'on' : ''));
+      hits.append(el('span', '', `past ${c.passed} of your ${c.pastHits} limit hits`));
+      rows.push(hits);
+    }
+    if (c.advice) rows.push(el('div', 'advice', c.advice));
+  }
+  for (const w of l.codex || []) {
+    const row = el('div', 'limit-row');
+    const detail = [w.minutesToFull && `full in ~${waitedFor(w.minutesToFull * 60_000)}`, w.resetsAt && `resets ${clock(w.resetsAt)}`].filter(Boolean).join(' · ');
+    row.append(el('span', 'limit-name', `Codex ${windowName(w.windowMinutes)}`.trim()), el('span', 'limit-status', `${Math.round(w.usedPercent)}% used`));
+    const meter = el('div', 'meter');
+    const fill = el('b');
+    fill.style.width = `${Math.min(100, w.usedPercent)}%`;
+    meter.append(fill);
+    rows.push(row, meter);
+    if (detail) rows.push(el('div', 'hits', detail));
+    if (w.usedPercent >= 80 && tone !== 'limited') tone = 'high';
+  }
+  box.className = `limits ${tone}`;
+  box.replaceChildren(...rows);
+  box.hidden = rows.length === 0;
+}
+
 function setView(v) {
   view = v;
   try {
@@ -111,6 +172,7 @@ function setView(v) {
   if (v === 'waiting') {
     $('updated').textContent = HOTKEY_HINT;
     loadLive();
+    loadLimits();
   } else {
     load();
   }
@@ -258,7 +320,7 @@ for (const key of ['agent', 'maker']) {
   });
 }
 $('report').addEventListener('click', openReport);
-$('refresh').addEventListener('click', () => (view === 'waiting' ? loadLive() : load(true)));
+$('refresh').addEventListener('click', () => (view === 'waiting' ? (loadLive(), loadLimits(true)) : load(true)));
 for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => setView(b.dataset.view));
 $('quit').addEventListener('click', () => invoke('quit'));
 document.addEventListener('keydown', (e) => {
@@ -267,6 +329,7 @@ document.addEventListener('keydown', (e) => {
 
 listen('panel-shown', () => {
   loadLive(); // cheap: keeps the count current on both tabs
+  if (view === 'waiting') loadLimits();
   if (view === 'wrapped') load();
 });
 listen('open-report', async () => {
