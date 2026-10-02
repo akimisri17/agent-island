@@ -5,6 +5,7 @@ pub mod limits;
 pub mod live;
 pub mod logs;
 pub mod notify;
+pub mod recap;
 pub mod settings;
 
 use tauri::{
@@ -98,6 +99,40 @@ fn compute_limits(r: &logs::Roots) -> limits::Limits {
 async fn limits(app: AppHandle) -> Result<limits::Limits, String> {
     let r = roots(&app)?;
     tauri::async_runtime::spawn_blocking(move || compute_limits(&r)).await.map_err(|e| e.to_string())
+}
+
+/// Today's sessions, from local midnight.
+#[tauri::command]
+async fn scan_today(app: AppHandle) -> Result<logs::ScanResult, String> {
+    let r = roots(&app)?;
+    let midnight = chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|t| t.and_local_timezone(chrono::Local).earliest())
+        .map_or(logs::now_ms() - 86_400_000, |t| t.timestamp_millis());
+    tauri::async_runtime::spawn_blocking(move || logs::scan_since(&r, midnight)).await.map_err(|e| e.to_string())
+}
+
+/// Commits since `since` in the repositories behind these folders.
+#[tauri::command]
+async fn recap_commits(cwds: Vec<String>, since: i64) -> Result<Vec<recap::RepoCommits>, String> {
+    tauri::async_runtime::spawn_blocking(move || recap::commits_since(&cwds, since)).await.map_err(|e| e.to_string())
+}
+
+/// Rewrites the recap with the person's own `claude`, only when they allowed it.
+#[tauri::command]
+async fn polish_recap(app: AppHandle, text: String) -> Result<String, String> {
+    let allowed = app.state::<Prefs>().0.lock().map(|p| p.recap_with_claude).unwrap_or(false);
+    if !allowed {
+        return Err("Turn on \"Polish recap with Claude\" in Settings first.".into());
+    }
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let claude = recap::find_claude(&home).ok_or("Could not find the claude command.")?;
+        recap::polish(&claude, &text)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Lets the person check that notifications reach them (macOS may ask first).
@@ -220,7 +255,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, polish_recap])
         .setup(|app| {
             let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
             let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");

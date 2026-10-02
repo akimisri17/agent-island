@@ -69,6 +69,7 @@ fn read(db: &rusqlite::Connection, b: &mut Builder, since: i64) -> rusqlite::Res
         let args: Args = get_string(&meta, &[4, 3]).and_then(|a| serde_json::from_str(&a).ok()).unwrap_or_default();
         if b.s.project.is_none() {
             b.s.project = args.cwd.as_deref().and_then(project_of);
+            b.s.cwd = args.cwd.clone();
         }
         if let (Some(n), Some(f)) = (name.as_deref(), args.target_file.or(args.absolute_path).or(args.file_path)) {
             if EDIT_TOOLS.contains(&n) {

@@ -63,6 +63,17 @@ The top of the Waiting tab shows your limits, but only what local data can actua
 
 Why there's no Claude percentage: Claude's logs only record the moment you hit a limit, and the 5-hour limit is shared with claude.ai and desktop chats, which leave no trace on your machine. On real data, usage before a limit hit varied more than 3× from one hit to the next, so any percentage would be invented.
 
+### Today: your daily recap
+
+The **Today** tab shows what agents did today, project by project:
+- time spent, which agents, the session titles, files touched
+- today's git commits in those repos (your own commits, by your git email)
+- what's still waiting on you, and which session to pick up next
+
+**Copy for standup** puts it on your clipboard as plain text.
+
+**Polish with Claude** is optional and off by default. Turn it on in Settings, and it rewrites the recap through *your own* installed `claude` command (`claude -p`), using your plan's usage. This sends today's session titles, project names and file names to Claude. It runs with no tools, without saving a session, and without your user plugins or hooks. It's the only thing in Agent Island that sends anything off your machine, and only when you click it.
+
 ### Wrapped
 
 Click the menu-bar icon and switch to **Wrapped** for a quick panel. Open the full report for the rest.
@@ -143,7 +154,7 @@ npm run build -- --bundles app,dmg   # macOS .app and .dmg
 
 ## Privacy
 
-- **Nothing leaves your machine.** No account, no telemetry, no analytics, no server.
+- **Nothing leaves your machine.** No account, no telemetry, no analytics, no server. The one exception is the optional **Polish with Claude** button on the Today tab: it's off until you turn it on, and it uses your own `claude` command.
 - **Read-only.** It reads agent logs and databases without changing them, and it never touches agent settings. SQLite databases are opened so that no files are created next to them; a test checks this.
 - **Not your prompts.** It counts messages and tools and reads timestamps and model names. Prompt text is never stored or shown. The report does show project names and the session titles your agents generate, blurred until you choose to reveal them.
 - **No network.** The app's content security policy blocks network requests, and the HTML report loads no fonts or scripts from anywhere.
@@ -195,7 +206,7 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [x] **Limits**: exact reset when limited, how this window compares with your past limit hits, official Codex percentages, one suggested move
 - [x] Limits: notifications when close, when limited, and on reset
 - [ ] Limits: Claude's weekly limit (no local data for it yet)
-- [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`
+- [x] **Today**: daily recap with commits, copy for standup, optional polish by your own `claude -p`
 - [ ] Signed releases, Homebrew, `npx agent-wrapped`
 
 ## Repository layout

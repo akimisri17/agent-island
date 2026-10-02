@@ -79,7 +79,10 @@ function read(db, path, since) {
     } catch {
       // arguments are not always JSON
     }
-    if (!s.project && typeof args.Cwd === 'string') s.project = projectOf(args.Cwd);
+    if (!s.project && typeof args.Cwd === 'string') {
+      s.project = projectOf(args.Cwd);
+      s.cwd = args.Cwd;
+    }
     const file = args.TargetFile || args.AbsolutePath || args.FilePath;
     if (EDIT_TOOLS.has(name) && typeof file === 'string') s.filesEdited.add(file);
   }

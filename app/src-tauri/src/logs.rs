@@ -44,6 +44,8 @@ pub struct Session {
     pub id: String,
     pub file: String,
     pub project: Option<String>,
+    /// Working directory, for finding the repository (daily recap).
+    pub cwd: Option<String>,
     pub title: Option<String>,
     pub start: Option<i64>,
     pub end: Option<i64>,
@@ -262,6 +264,7 @@ pub fn parse_claude(path: &Path, since: i64, is_subagent: bool) -> Session {
         }
         if b.s.project.is_none() {
             b.s.project = d.cwd.as_deref().and_then(project_of);
+            b.s.cwd = d.cwd.clone();
         }
         if let Some(q) = &d.quota_limits {
             if q.status.as_deref() == Some("rejected") {
@@ -411,6 +414,7 @@ pub fn parse_codex(path: &Path, since: i64) -> Session {
             }
             if let Some(cwd) = p.cwd.as_deref() {
                 b.s.project = project_of(cwd);
+                b.s.cwd = Some(cwd.to_string());
             }
             continue;
         }
@@ -552,9 +556,12 @@ pub fn now_ms() -> i64 {
 }
 
 pub fn scan(roots: &Roots, days: u32) -> ScanResult {
+    scan_since(roots, now_ms() - i64::from(days) * 86_400_000)
+}
+
+pub fn scan_since(roots: &Roots, since: i64) -> ScanResult {
     let t0 = Instant::now();
     let until = now_ms();
-    let since = until - i64::from(days) * 86_400_000;
     let (mut claude, mut codex) = (Vec::new(), Vec::new());
     list_jsonl(&roots.claude, since, &mut claude);
     list_jsonl(&roots.codex, since, &mut codex);
@@ -597,6 +604,7 @@ mod tests {
         let s = parse_claude(&fx("claude-session.jsonl"), SINCE, false);
         assert_eq!(s.title.as_deref(), Some("Fix login bug"));
         assert_eq!(s.project.as_deref(), Some("shop"));
+        assert_eq!(s.cwd.as_deref(), Some("/work/shop"));
         assert_eq!(s.prompts.len(), 2);
         assert_eq!(s.tokens, Tokens { input: 15, cache_read: 3000, cache_write: 100, output: 130 });
         assert_eq!(s.models.get("claude-sonnet-5"), Some(&50));
@@ -619,6 +627,7 @@ mod tests {
         let s = parse_codex(&fx("codex-rollout.jsonl"), SINCE);
         assert_eq!(s.id, "c1");
         assert_eq!(s.project.as_deref(), Some("api"));
+        assert_eq!(s.cwd.as_deref(), Some("/work/api"));
         assert_eq!(s.prompts.len(), 2);
         assert_eq!(s.tokens, Tokens { input: 1500, cache_read: 4500, cache_write: 0, output: 350 });
         assert_eq!(s.models.get("gpt-5.5"), Some(&350));

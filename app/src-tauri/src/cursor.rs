@@ -122,7 +122,8 @@ fn read(db: &Connection, path: &Path, since: i64) -> rusqlite::Result<Vec<Sessio
         let id = d.composer_id.clone().unwrap_or_else(|| key["composerData:".len()..].to_string());
         let mut b = Builder::new("cursor", id.clone(), path);
         b.s.title = d.name.filter(|n| !n.is_empty());
-        b.s.project = d.workspace_identifier.and_then(|w| w.uri).and_then(|u| u.fs_path).as_deref().and_then(project_of);
+        b.s.cwd = d.workspace_identifier.and_then(|w| w.uri).and_then(|u| u.fs_path);
+        b.s.project = b.s.cwd.as_deref().and_then(project_of);
         b.s.is_subagent = subagents.contains(&id) || d.is_best_of_n_subcomposer == Some(true);
         let model = cursor_model(d.model_config.and_then(|m| m.model_name).as_deref());
 

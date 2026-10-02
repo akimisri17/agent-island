@@ -11,6 +11,7 @@
 <header class="top">
   <div class="tabs" role="tablist" aria-label="View">
     <button role="tab" data-view="waiting" aria-selected="true">Waiting <span class="count" id="wcount"></span></button>
+    <button role="tab" data-view="today" aria-selected="false">Today</button>
     <button role="tab" data-view="wrapped" aria-selected="false">Wrapped</button>
   </div>
   <div class="right">
@@ -30,6 +31,20 @@
   <div class="empty" id="live-empty" hidden>
     <div class="empty-title">Nothing is waiting on you</div>
     <div class="muted">Running Claude Code, Codex, and Cursor sessions show up here when they finish or need approval.</div>
+  </div>
+</section>
+
+<section class="view" id="view-today" hidden>
+  <div>
+    <div class="today-total" id="today-total">Reading today's logs…</div>
+    <div class="muted" id="today-sub">&nbsp;</div>
+  </div>
+  <ul class="today" id="today-list"></ul>
+  <div class="today-wait" id="today-wait" hidden></div>
+  <pre class="polished" id="polished" hidden></pre>
+  <div class="today-actions">
+    <button class="primary" id="copy-recap" disabled>Copy for standup</button>
+    <button class="secondary" id="polish" disabled>Polish with Claude</button>
   </div>
 </section>
 

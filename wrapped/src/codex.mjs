@@ -14,7 +14,10 @@ export async function parseCodexFile(path, { since } = {}) {
     const p = d.payload || {};
     if (d.type === 'session_meta') {
       if (p.id) s.id = p.id;
-      if (p.cwd) s.project = projectOf(p.cwd);
+      if (p.cwd) {
+        s.project = projectOf(p.cwd);
+        s.cwd = p.cwd;
+      }
       continue;
     }
     if (d.type === 'turn_context' && p.model) model = p.model;
