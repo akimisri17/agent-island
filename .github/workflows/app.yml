@@ -1,4 +1,4 @@
-# Tests every pull request and every push to main. Builds the Agent Island
+# Tests every pull request and every push to dev and main. Builds the Agent Island
 # desktop app for macOS (Apple silicon + Intel) and Windows only on tags like
 # app-v0.1.0 or by hand from the Actions tab, and uploads unsigned installers
 # as a draft release. Signing secrets go here later.
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ['app-v*']
 
 permissions:
