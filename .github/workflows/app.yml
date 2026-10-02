@@ -1,11 +1,14 @@
-# Builds the Agent Island desktop app for macOS (Apple silicon + Intel) and
-# Windows. Runs on tags like app-v0.1.0, or by hand from the Actions tab.
-# Uploads unsigned installers as a draft release. Signing secrets go here later.
+# Tests every pull request and every push to main. Builds the Agent Island
+# desktop app for macOS (Apple silicon + Intel) and Windows only on tags like
+# app-v0.1.0 or by hand from the Actions tab, and uploads unsigned installers
+# as a draft release. Signing secrets go here later.
 name: app
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches: [main]
     tags: ['app-v*']
 
 permissions:
@@ -28,6 +31,7 @@ jobs:
 
   build:
     needs: test
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
