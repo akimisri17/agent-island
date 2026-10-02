@@ -59,6 +59,7 @@ The top of the Waiting tab shows your limits, but only what local data can actua
 - **Claude 5-hour, otherwise:** one dot for each past time you hit the limit, filled once this window has used more than you had used then. For example: *past 7 of your 11 limit hits*.
 - **Codex:** the official `used_percent` and reset time for each window, read from Codex's own logs, plus "full in ~N min" from how fast the percentage is rising.
 - **One suggested move** when you're close: pause one of several working sessions, use a smaller model, or save long runs for after the reset.
+- **Notifications:** at most one per window when you get close, one when a Claude limit is reached, and one when it resets. You can switch them off in Settings, which also has a button to send a test notification.
 
 Why there's no Claude percentage: Claude's logs only record the moment you hit a limit, and the 5-hour limit is shared with claude.ai and desktop chats, which leave no trace on your machine. On real data, usage before a limit hit varied more than 3× from one hit to the next, so any percentage would be invented.
 
@@ -192,7 +193,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [x] Settings: choose your own hotkey
 - [ ] Waiting: Windows jump; Antigravity live sessions
 - [x] **Limits**: exact reset when limited, how this window compares with your past limit hits, official Codex percentages, one suggested move
-- [ ] Limits: a notification before the limit, and Claude's weekly limit (no local data for it yet)
+- [x] Limits: notifications when close, when limited, and on reset
+- [ ] Limits: Claude's weekly limit (no local data for it yet)
 - [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`
 - [ ] Signed releases, Homebrew, `npx agent-wrapped`
 

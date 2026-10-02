@@ -376,6 +376,15 @@ $('gear').addEventListener('click', () => {
 });
 $('back').addEventListener('click', () => setView(lastView));
 $('notify').addEventListener('change', (e) => saveSettings({ notifyLimits: e.target.checked }));
+$('test-notify').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    await invoke('test_notification');
+    $('hotkey-msg').textContent = '';
+  } catch (err) {
+    $('hotkey-msg').textContent = `Could not notify: ${err}`;
+  }
+});
 $('recap-claude').addEventListener('change', (e) => saveSettings({ recapWithClaude: e.target.checked }));
 
 // Click the key, then press a shortcut. Needs a modifier unless it is F1–F24.

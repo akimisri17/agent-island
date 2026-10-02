@@ -4,6 +4,7 @@ pub mod foreign;
 pub mod limits;
 pub mod live;
 pub mod logs;
+pub mod notify;
 pub mod settings;
 
 use tauri::{
@@ -72,32 +73,58 @@ async fn jump(app: AppHandle, session_id: String) -> Result<(), String> {
 
 /// Where you stand against usage limits. Reading 35 days of Claude logs
 /// takes a few seconds, so Claude's part is cached for 5 minutes.
+fn compute_limits(r: &logs::Roots) -> limits::Limits {
+    static CLAUDE: Mutex<Option<(i64, Vec<limits::Spend>, Vec<limits::Hit>)>> = Mutex::new(None);
+    let now = logs::now_ms();
+    let cached = CLAUDE.lock().ok().and_then(|c| c.clone()).filter(|(at, _, _)| now - at < 5 * 60_000);
+    let (spend, hits) = match cached {
+        Some((_, s, h)) => (s, h),
+        None => {
+            let (s, h) = limits::read_claude(&r.claude, now - 35 * 86_400_000);
+            if let Ok(mut c) = CLAUDE.lock() {
+                *c = Some((now, s.clone(), h.clone()));
+            }
+            (s, h)
+        }
+    };
+    let working = live::live_sessions(r).iter().filter(|s| s.agent == "claude" && s.state == live::State::Working).count();
+    limits::Limits {
+        claude: (!spend.is_empty()).then(|| limits::claude_limit(&spend, &hits, now, working)),
+        codex: limits::codex_limits(&r.codex, now),
+    }
+}
+
 #[tauri::command]
 async fn limits(app: AppHandle) -> Result<limits::Limits, String> {
-    use std::sync::Mutex;
-    static CLAUDE: Mutex<Option<(i64, Vec<limits::Spend>, Vec<limits::Hit>)>> = Mutex::new(None);
     let r = roots(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let now = logs::now_ms();
-        let cached = CLAUDE.lock().ok().and_then(|c| c.clone()).filter(|(at, _, _)| now - at < 5 * 60_000);
-        let (spend, hits) = match cached {
-            Some((_, s, h)) => (s, h),
-            None => {
-                let (s, h) = limits::read_claude(&r.claude, now - 35 * 86_400_000);
-                if let Ok(mut c) = CLAUDE.lock() {
-                    *c = Some((now, s.clone(), h.clone()));
-                }
-                (s, h)
-            }
-        };
-        let working = live::live_sessions(&r).iter().filter(|s| s.agent == "claude" && s.state == live::State::Working).count();
-        limits::Limits {
-            claude: (!spend.is_empty()).then(|| limits::claude_limit(&spend, &hits, now, working)),
-            codex: limits::codex_limits(&r.codex, now),
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || compute_limits(&r)).await.map_err(|e| e.to_string())
+}
+
+/// Lets the person check that notifications reach them (macOS may ask first).
+#[tauri::command]
+fn test_notification(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title("Agent Island")
+        .body("Notifications work. You'll hear from it when you get close to a limit.")
+        .show()
+        .map_err(|e| e.to_string())
+}
+
+/// Shows any limit notifications that are due. Called every 5 minutes.
+fn check_limit_notifications(app: &AppHandle, notifier: &Mutex<notify::Notifier>) {
+    use tauri_plugin_notification::NotificationExt;
+    let on = app.state::<Prefs>().0.lock().map(|p| p.notify_limits).unwrap_or(false);
+    let Ok(r) = roots(app) else { return };
+    if !on {
+        return;
+    }
+    let l = compute_limits(&r);
+    let Ok(mut n) = notifier.lock() else { return };
+    for note in n.due(&l, logs::now_ms()) {
+        let _ = app.notification().builder().title(&note.title).body(&note.body).show();
+    }
 }
 
 /// The hotkey: bring forward the session that has waited longest. With
@@ -182,6 +209,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             // One handler for whichever shortcut is registered: the app only ever has one.
             tauri_plugin_global_shortcut::Builder::new()
@@ -192,7 +220,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification])
         .setup(|app| {
             let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
             let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");
@@ -232,14 +260,20 @@ pub fn run() {
 
             // Keep the badge current: a light check once a minute (one
             // process listing plus the tail of each live session's log).
+            // Every fifth tick, check whether a limit notification is due.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                loop {
+                let notifier = std::sync::Arc::new(Mutex::new(notify::Notifier::default()));
+                for tick in 0u64.. {
                     if let Ok(r) = roots(&handle) {
                         let n = tauri::async_runtime::spawn_blocking(move || live::live_sessions(&r).iter().filter(|s| s.needs_you()).count())
                             .await
                             .unwrap_or(0);
                         set_badge(&handle, n);
+                    }
+                    if tick % 5 == 0 {
+                        let (h, n) = (handle.clone(), notifier.clone());
+                        let _ = tauri::async_runtime::spawn_blocking(move || check_limit_notifications(&h, &n)).await;
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 }
