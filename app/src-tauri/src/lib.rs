@@ -1,6 +1,7 @@
 pub mod antigravity;
 pub mod cursor;
 pub mod foreign;
+pub mod limits;
 pub mod live;
 pub mod logs;
 
@@ -64,6 +65,36 @@ async fn jump(app: AppHandle, session_id: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Where you stand against usage limits. Reading 35 days of Claude logs
+/// takes a few seconds, so Claude's part is cached for 5 minutes.
+#[tauri::command]
+async fn limits(app: AppHandle) -> Result<limits::Limits, String> {
+    use std::sync::Mutex;
+    static CLAUDE: Mutex<Option<(i64, Vec<limits::Spend>, Vec<limits::Hit>)>> = Mutex::new(None);
+    let r = roots(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = logs::now_ms();
+        let cached = CLAUDE.lock().ok().and_then(|c| c.clone()).filter(|(at, _, _)| now - at < 5 * 60_000);
+        let (spend, hits) = match cached {
+            Some((_, s, h)) => (s, h),
+            None => {
+                let (s, h) = limits::read_claude(&r.claude, now - 35 * 86_400_000);
+                if let Ok(mut c) = CLAUDE.lock() {
+                    *c = Some((now, s.clone(), h.clone()));
+                }
+                (s, h)
+            }
+        };
+        let working = live::live_sessions(&r).iter().filter(|s| s.agent == "claude" && s.state == live::State::Working).count();
+        limits::Limits {
+            claude: (!spend.is_empty()).then(|| limits::claude_limit(&spend, &hits, now, working)),
+            codex: limits::codex_limits(&r.codex, now),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// The hotkey: bring forward the session that has waited longest. With
@@ -131,7 +162,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits])
         .setup(|app| {
             // Menu-bar only: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]

@@ -6,7 +6,7 @@ The agent-island product: a menu-bar app (macOS) and tray app (Windows) that wat
 |---|---|
 | **Wrapped**: what your agents did in the last 7 or 30 days, persona and badges, full HTML report | built |
 | **Waiting**: ⌃⌥J to the session that has waited longest, count in the menu bar | built (macOS jump) |
-| **Coach**: forecast before the weekly limit, with one recommended move | planned |
+| **Limits**: exact reset when limited, this window against your past limit hits, official Codex percentages, one move | built |
 | **Recap**: end-of-day standup summary, written by your own `claude -p` | planned |
 
 The `wrapped/` CLI at the repo root is the same Wrapped view without installing anything (`npx` later). It shares this app's stats and report code. It is a way in, not a second product.
@@ -23,6 +23,7 @@ To see live sessions from a terminal: `cd src-tauri && cargo run --example live`
 | Stats, personas, report | `ui/lib/` (copied from `wrapped/src/`) | The same code the CLI uses. Do not edit the copies |
 | Panel | `ui/index.html`, `panel.js`, `panel.css` | The popover |
 | Live sessions | `src-tauri/src/live.rs` | Running `claude`/`codex` processes → session log → state (finished, tool or approval, working); Cursor chats from its database while Cursor runs; jump via AppleScript (Terminal, iTerm), `open -a` (editors, other apps) |
+| Limits | `src-tauri/src/limits.rs` | Claude: usage per message (a cost-like weighting) and logged limit hits; Codex: official `rate_limits`. `cargo run --release --example limits` |
 | Shell | `src-tauri/src/lib.rs` | Tray icon and badge, popover window, global hotkey, `scan`, `live`, `jump`, `open_report` commands |
 
 `scripts/sync-lib.mjs` copies the shared JS before every dev run and build.
