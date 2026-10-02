@@ -8,6 +8,11 @@
 //!   assistant tool_use with no result after   -> running a tool or waiting for approval
 //!   anything else                             -> working
 //! Sessions with no prompt typed by a person (plugins, scripts) are left out.
+//!
+//! Cursor runs every chat inside one app, so there is no process per chat.
+//! While Cursor is running, chats active in the last 12 hours are read from
+//! its database: generating -> working; a pending action -> approval;
+//! completed with the agent's message last -> finished, waiting for you.
 
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -19,6 +24,8 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 /// A tool call older than this with no result is probably waiting for approval.
 const APPROVAL_AFTER_MS: i64 = 20_000;
 const TAIL_BYTES: u64 = 256 * 1024;
+/// Cursor chats untouched for longer than this are not "live".
+const CURSOR_LIVE_MS: i64 = 12 * 3_600_000;
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -42,6 +49,8 @@ pub struct LiveSession {
     pub pid: u32,
     /// The app hosting the session (Terminal, iTerm, VS Code, Claude, …).
     pub host: Option<String>,
+    /// Finished and not yet looked at (Cursor tracks this).
+    pub unread: bool,
     #[serde(skip)]
     pub host_bundle: Option<PathBuf>,
 }
@@ -119,7 +128,17 @@ fn host_bundle(sys: &System, pid: Pid) -> Option<PathBuf> {
     found
 }
 
-fn processes() -> Vec<Proc> {
+/// The running Cursor app's bundle, if Cursor is open.
+fn cursor_bundle(sys: &System) -> Option<PathBuf> {
+    sys.processes().values().find_map(|p| {
+        let exe = p.exe()?.to_string_lossy().into_owned();
+        let i = exe.find(".app/Contents/MacOS/")?;
+        let bundle = &exe[..i + 4];
+        bundle.ends_with("/Cursor.app").then(|| PathBuf::from(bundle))
+    })
+}
+
+fn processes() -> (Vec<Proc>, Option<PathBuf>) {
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
@@ -132,6 +151,96 @@ fn processes() -> Vec<Proc> {
         let Some(agent) = agent_of(&p.name().to_string_lossy(), &cmd) else { continue };
         let Some(cwd) = p.cwd().map(Path::to_path_buf) else { continue };
         out.push(Proc { pid: pid.as_u32(), agent, cwd, resume: resume_id(&cmd), host_bundle: host_bundle(&sys, *pid) });
+    }
+    (out, cursor_bundle(&sys))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorChat {
+    composer_id: Option<String>,
+    name: Option<String>,
+    status: Option<String>,
+    last_updated_at: Option<i64>,
+    has_unread_messages: Option<bool>,
+    has_blocking_pending_actions: Option<bool>,
+    is_archived: Option<bool>,
+    is_draft: Option<bool>,
+    is_best_of_n_subcomposer: Option<bool>,
+    generating_bubble_ids: Option<Vec<serde_json::Value>>,
+    workspace_identifier: Option<serde_json::Value>,
+    full_conversation_headers_only: Option<Vec<CursorHeader>>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorHeader {
+    #[serde(rename = "type")]
+    kind: Option<u8>,
+    started_at_ms: Option<i64>,
+    completed_at_ms: Option<i64>,
+}
+
+/// State of one Cursor chat, or None when it is not a live conversation.
+fn cursor_chat_state(c: &CursorChat, now: i64) -> Option<(State, i64)> {
+    if c.is_archived == Some(true) || c.is_draft == Some(true) || c.is_best_of_n_subcomposer == Some(true) {
+        return None;
+    }
+    let updated = c.last_updated_at?;
+    if now - updated > CURSOR_LIVE_MS {
+        return None;
+    }
+    if c.has_blocking_pending_actions == Some(true) {
+        return Some((State::Approval, updated));
+    }
+    if c.status.as_deref() == Some("generating") || c.generating_bubble_ids.as_ref().is_some_and(|g| !g.is_empty()) {
+        return Some((State::Working, updated));
+    }
+    let last = c.full_conversation_headers_only.as_ref()?.last()?;
+    if c.status.as_deref() == Some("completed") && last.kind == Some(2) {
+        return Some((State::Waiting, last.completed_at_ms.or(last.started_at_ms).unwrap_or(updated)));
+    }
+    None
+}
+
+fn cursor_sessions(db_path: &Path, bundle: &Path, now: i64) -> Vec<LiveSession> {
+    let Some(db) = crate::foreign::open_foreign_db(db_path) else { return Vec::new() };
+    let Ok(mut st) = db.prepare("SELECT value FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;'") else {
+        return Vec::new();
+    };
+    // Cursor stores these values as TEXT; older versions used BLOB.
+    let Ok(rows) = st.query_map([], |r| {
+        Ok(match r.get_ref(0)? {
+            rusqlite::types::ValueRef::Text(b) | rusqlite::types::ValueRef::Blob(b) => Some(b.to_vec()),
+            _ => None,
+        })
+    }) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for v in rows.filter_map(Result::ok).flatten() {
+        let Ok(c) = serde_json::from_slice::<CursorChat>(&v) else { continue };
+        let Some((state, since)) = cursor_chat_state(&c, now) else { continue };
+        let cwd = c
+            .workspace_identifier
+            .as_ref()
+            .and_then(|w| w.pointer("/uri/fsPath"))
+            .and_then(|p| p.as_str())
+            .unwrap_or_default()
+            .to_string();
+        out.push(LiveSession {
+            agent: "cursor",
+            session_id: c.composer_id.clone().unwrap_or_default(),
+            title: c.name.clone().filter(|n| !n.is_empty()),
+            project: crate::logs::project_of(&cwd),
+            cwd,
+            state,
+            since,
+            pid: 0,
+            host: Some("Cursor".into()),
+            unread: c.has_unread_messages == Some(true),
+            host_bundle: Some(bundle.to_path_buf()),
+        });
     }
     out
 }
@@ -261,7 +370,7 @@ fn codex_rollout_for(sessions_root: &Path, cwd: &Path, taken: &HashSet<PathBuf>)
 
 pub fn live_sessions(roots: &crate::logs::Roots) -> Vec<LiveSession> {
     let now = crate::logs::now_ms();
-    let procs = processes();
+    let (procs, cursor) = processes();
     let mut taken: HashSet<PathBuf> = HashSet::new();
     let mut out = Vec::new();
 
@@ -305,8 +414,12 @@ pub fn live_sessions(roots: &crate::logs::Roots) -> Vec<LiveSession> {
             since,
             pid: p.pid,
             host: p.host_bundle.as_ref().and_then(|b| b.file_stem()).map(|s| s.to_string_lossy().into_owned()),
+            unread: false,
             host_bundle: p.host_bundle.clone(),
         });
+    }
+    if let Some(bundle) = cursor {
+        out.extend(cursor_sessions(&roots.cursor, &bundle, now));
     }
     // Longest wait first; working sessions last.
     out.sort_by_key(|s| (!s.needs_you(), s.since));
@@ -320,13 +433,13 @@ pub fn jump(s: &LiveSession) -> Result<(), String> {
     use std::process::Command;
     let Some(bundle) = &s.host_bundle else { return Err("no app found for this session".into()) };
     let app = bundle.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tty = Command::new("ps")
+    let tty = (s.pid != 0).then(|| Command::new("ps")
         .args(["-o", "tty=", "-p", &s.pid.to_string()])
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|t| !t.is_empty() && t != "??")
-        .map(|t| format!("/dev/{t}"));
+        .map(|t| format!("/dev/{t}"))).flatten();
     let script = match (app.as_str(), &tty) {
         ("Terminal", Some(tty)) => Some(format!(
             r#"tell application "Terminal"
@@ -451,6 +564,28 @@ mod tests {
         assert_eq!(resume_id(&["claude".into(), "--resume=abc".into()]).as_deref(), Some("abc"));
         assert_eq!(resume_id(&["claude".into(), "--resume".into(), "def".into()]).as_deref(), Some("def"));
         assert_eq!(resume_id(&["claude".into(), "--resume".into(), "--verbose".into()]), None);
+    }
+
+    fn chat(json: &str) -> CursorChat {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn cursor_chat_states() {
+        let now = 1_790_000_000_000_i64;
+        let recent = now - 600_000;
+        let done = format!(r#"{{"status":"completed","lastUpdatedAt":{recent},"generatingBubbleIds":null,"fullConversationHeadersOnly":[{{"type":1}},{{"type":2,"completedAtMs":{recent}}}]}}"#);
+        assert_eq!(cursor_chat_state(&chat(&done), now), Some((State::Waiting, recent)));
+        let gen = format!(r#"{{"status":"generating","lastUpdatedAt":{recent},"fullConversationHeadersOnly":[{{"type":1}}]}}"#);
+        assert_eq!(cursor_chat_state(&chat(&gen), now).unwrap().0, State::Working);
+        let blocked = format!(r#"{{"status":"completed","hasBlockingPendingActions":true,"lastUpdatedAt":{recent}}}"#);
+        assert_eq!(cursor_chat_state(&chat(&blocked), now).unwrap().0, State::Approval);
+        let old = format!(r#"{{"status":"completed","lastUpdatedAt":{},"fullConversationHeadersOnly":[{{"type":2}}]}}"#, now - 13 * 3_600_000);
+        assert_eq!(cursor_chat_state(&chat(&old), now), None);
+        let user_last = format!(r#"{{"status":"completed","lastUpdatedAt":{recent},"fullConversationHeadersOnly":[{{"type":1}}]}}"#);
+        assert_eq!(cursor_chat_state(&chat(&user_last), now), None);
+        let archived = format!(r#"{{"status":"completed","isArchived":true,"lastUpdatedAt":{recent},"fullConversationHeadersOnly":[{{"type":2}}]}}"#);
+        assert_eq!(cursor_chat_state(&chat(&archived), now), None);
     }
 
     #[test]

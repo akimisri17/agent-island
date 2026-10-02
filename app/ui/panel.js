@@ -23,7 +23,7 @@ try {
   // storage unavailable: start unfiltered, on Waiting
 }
 
-const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 const STATE_LABEL = { waiting: 'Finished', approval: 'Tool running or needs approval', working: 'Working' };
 
 function waitedFor(ms) {
@@ -53,7 +53,8 @@ function liveRow(s) {
   }
   const sub = document.createElement('span');
   sub.className = 'sub';
-  sub.textContent = [STATE_LABEL[s.state], AGENT_LABEL[s.agent] || s.agent, s.host && `in ${s.host}`, s.title && s.project].filter(Boolean).join(' · ');
+  const host = s.host && s.host !== AGENT_LABEL[s.agent] ? `in ${s.host}` : null;
+  sub.textContent = [s.unread ? `${STATE_LABEL[s.state]}, unread` : STATE_LABEL[s.state], AGENT_LABEL[s.agent] || s.agent, host, s.title && s.project].filter(Boolean).join(' · ');
   li.append(dot, title, age, sub);
   if (s.state !== 'working') {
     li.tabIndex = 0;
