@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { scan, defaultRoots } from '../src/scan.mjs';
 import { computeStats } from '../src/stats.mjs';
 import { renderHtml } from '../src/render.mjs';
+import { demoSessions } from '../src/demo.mjs';
 
 const HELP = `agent-wrapped: a local report of what your coding agents did.
 
@@ -12,11 +13,13 @@ Reads Claude Code (~/.claude/projects), Codex (~/.codex/sessions), and Cursor
 (its local chat database) on this machine and writes one HTML file. Nothing is
 sent anywhere.
 
-Usage: agent-wrapped [--days 30] [--out agent-wrapped.html] [--json] [--no-open]
+Usage: agent-wrapped [--days 30] [--out agent-wrapped.html] [--json] [--no-open] [--demo]
+
+  --demo   made-up data, to see the report without any agent logs
 `;
 
 function parseArgs(argv) {
-  const opts = { days: 30, out: 'agent-wrapped.html', json: false, open: true };
+  const opts = { days: 30, out: 'agent-wrapped.html', json: false, open: true, demo: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') opts.help = true;
@@ -24,6 +27,7 @@ function parseArgs(argv) {
     else if (a === '--out') opts.out = argv[++i];
     else if (a === '--json') opts.json = true;
     else if (a === '--no-open') opts.open = false;
+    else if (a === '--demo') opts.demo = true;
     else throw new Error(`Unknown option: ${a}`);
   }
   if (!Number.isFinite(opts.days) || opts.days <= 0) throw new Error('--days must be a positive number');
@@ -47,7 +51,7 @@ async function main() {
   const roots = defaultRoots();
   const t0 = Date.now();
   const tty = process.stderr.isTTY;
-  const result = await scan({
+  const result = opts.demo ? demoResult(since, until) : await scan({
     since,
     roots,
     onProgress: (done, total) => {
@@ -73,6 +77,10 @@ async function main() {
   await writeFile(out, renderHtml(stats, { files: result.files, bytes: result.bytes, seconds }));
   process.stderr.write(`${stats.persona.name}. ${stats.persona.line}\nWrote ${out}\n`);
   if (opts.open) openFile(out);
+}
+
+function demoResult(since, until) {
+  return { sessions: demoSessions({ since, until }), files: { claude: 412, codex: 96, cursor: 1 }, bytes: 2.4e9 };
 }
 
 function openFile(path) {
