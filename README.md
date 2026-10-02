@@ -35,9 +35,25 @@ If you run several agents at once, two things happen every day:
 
 Usage meters show how much is left right now. Agent Island tracks the sessions themselves: how much work your agents did, how long they sat waiting for you, and where your limits went. It does this across agents, from data already on your machine. Nothing is sent anywhere.
 
-## What you get today: Wrapped
+## What you get today
 
-Click the menu-bar icon for a quick panel. Open the full report for the rest.
+### Waiting: press ⌃⌥J
+
+Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that has waited longest for you. The number next to the menu-bar icon shows how many sessions are waiting.
+
+- **Finished:** the agent ended its turn and is waiting for your next message.
+- **Tool running or needs approval:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
+- **Where the jump lands:**
+  - Terminal and iTerm: the exact tab.
+  - VS Code, Cursor, Windsurf, Zed: the window for that folder.
+  - Anything else, such as the Claude desktop app, Ghostty or Warp: the app comes to the front.
+- **Covers** running Claude Code and Codex sessions. Plugin- and script-driven sessions are left out.
+
+The Waiting tab lists the same sessions, longest wait first. Click one to jump to it.
+
+### Wrapped
+
+Click the menu-bar icon and switch to **Wrapped** for a quick panel. Open the full report for the rest.
 
 - **A persona and two badges** picked from your own data: *The Conductor* (many agents at once), *The Absent Boss* (agents waiting on you), *The Polyglot* (several model makers), and 16 more.
 - **Agent-hours**: how long your agents actually worked.
@@ -119,7 +135,7 @@ npm run build -- --bundles app,dmg   # macOS .app and .dmg
 - **Read-only.** It reads agent logs and databases without changing them, and it never touches agent settings. SQLite databases are opened so that no files are created next to them; a test checks this.
 - **Not your prompts.** It counts messages and tools and reads timestamps and model names. Prompt text is never stored or shown. The report does show project names and the session titles your agents generate, blurred until you choose to reveal them.
 - **No network.** The app's content security policy blocks network requests, and the HTML report loads no fonts or scripts from anywhere.
-- **No screen recording, no Accessibility permission, no keychain access.**
+- **No screen recording, no Accessibility permission, no keychain access.** Jumping to a Terminal or iTerm tab asks macOS for permission to control that app. It only selects the tab and never reads or types anything.
 - **Share safely.** The share card has numbers only. The report blurs project names until you untick the box.
 
 ## How it works
@@ -141,7 +157,8 @@ npm run build -- --bundles app,dmg   # macOS .app and .dmg
 - **Agent-hours** are capped at 3 hours per turn, so a forgotten loop doesn't inflate them. Parallel sessions add up.
 - **Projects** are the folder an agent worked in. Git worktrees count toward their repository.
 - **Sessions you started** are ones with at least one prompt you typed. Plugin-driven and subagent runs count toward tokens only.
-- **Battery:** nothing runs in the background. Logs are read when the app starts and when you open the panel, at most once every 5 minutes. Reading about 6 GB of logs takes about 4 seconds.
+- **Battery:** the full log read for Wrapped happens only when the app starts and when you open the panel, at most once every 5 minutes. Reading about 6 GB takes about 4 seconds. The waiting count refreshes once a minute: one process listing plus the end of each running session's log, about 35 ms.
+- **Live sessions** are matched to running `claude` and `codex` processes by working folder, or by `--resume` id when one is given.
 
 The Rust readers and the Node readers are tested against the same sample files, and they give identical numbers on real logs.
 
@@ -159,7 +176,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [x] Claude Code, Codex, and Cursor
 - [x] Antigravity CLI
 - [ ] Gemini CLI, Copilot CLI, Qwen Code
-- [ ] **Waiting**: one hotkey to jump to the session that has waited longest, in whatever terminal it's in
+- [x] **Waiting**: ⌃⌥J jumps to the session that has waited longest; count in the menu bar
+- [ ] Waiting: choose your own hotkey; Windows jump; Cursor and Antigravity live sessions
 - [ ] **Limit coach**: warn before the weekly limit, with one suggested move (pause a session, switch model, wait for the reset)
 - [ ] **Daily recap**: an end-of-day standup summary, written by your own installed `claude -p`
 - [ ] Signed releases, Homebrew, `npx agent-wrapped`

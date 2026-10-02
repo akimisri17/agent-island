@@ -5,13 +5,15 @@ The agent-island product: a menu-bar app (macOS) and tray app (Windows) that wat
 | View | Status |
 |---|---|
 | **Wrapped**: what your agents did in the last 7 or 30 days, persona and badges, full HTML report | built |
-| **Waiting**: one hotkey to the session that has waited longest | next |
+| **Waiting**: ⌃⌥J to the session that has waited longest, count in the menu bar | built (macOS jump) |
 | **Coach**: forecast before the weekly limit, with one recommended move | planned |
 | **Recap**: end-of-day standup summary, written by your own `claude -p` | planned |
 
 The `wrapped/` CLI at the repo root is the same Wrapped view without installing anything (`npx` later). It shares this app's stats and report code. It is a way in, not a second product.
 
-Nothing runs in the background. Logs are read when the panel opens, and again after it has been closed for 5 minutes or more. No network access.
+Wrapped reads logs when the panel opens, at most once every 5 minutes. The waiting count refreshes once a minute (about 35 ms). No network access.
+
+To see live sessions from a terminal: `cd src-tauri && cargo run --example live`.
 
 ## How it fits together
 
@@ -20,7 +22,8 @@ Nothing runs in the background. Logs are read when the panel opens, and again af
 | Log readers | `src-tauri/src/logs.rs`, `cursor.rs`, `antigravity.rs`, `foreign.rs` | Rust ports of `wrapped/src/claude.mjs`, `codex.mjs`, `cursor.mjs`, `antigravity.mjs`, `sqlite.mjs`, `protobuf.mjs`. Reads about 6 GB in about 4 s |
 | Stats, personas, report | `ui/lib/` (copied from `wrapped/src/`) | The same code the CLI uses. Do not edit the copies |
 | Panel | `ui/index.html`, `panel.js`, `panel.css` | The popover |
-| Shell | `src-tauri/src/lib.rs` | Tray icon, popover window, `scan` and `open_report` commands |
+| Live sessions | `src-tauri/src/live.rs` | Running `claude`/`codex` processes → session log → state (finished, tool or approval, working); jump via AppleScript (Terminal, iTerm), `open -a` (editors, other apps) |
+| Shell | `src-tauri/src/lib.rs` | Tray icon and badge, popover window, global hotkey, `scan`, `live`, `jump`, `open_report` commands |
 
 `scripts/sync-lib.mjs` copies the shared JS before every dev run and build.
 
