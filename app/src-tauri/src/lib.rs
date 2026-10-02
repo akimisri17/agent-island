@@ -1,6 +1,7 @@
 pub mod antigravity;
 pub mod cursor;
 pub mod foreign;
+pub mod live;
 pub mod logs;
 
 use tauri::{
@@ -40,12 +41,71 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+fn roots(app: &AppHandle) -> Result<logs::Roots, String> {
+    Ok(logs::Roots::default_for(&app.path().home_dir().map_err(|e| e.to_string())?))
+}
+
+/// Running sessions, longest wait first.
+#[tauri::command]
+async fn live(app: AppHandle) -> Result<Vec<live::LiveSession>, String> {
+    let r = roots(&app)?;
+    let sessions = tauri::async_runtime::spawn_blocking(move || live::live_sessions(&r)).await.map_err(|e| e.to_string())?;
+    set_badge(&app, sessions.iter().filter(|s| s.needs_you()).count());
+    Ok(sessions)
+}
+
+#[tauri::command]
+async fn jump(app: AppHandle, session_id: String) -> Result<(), String> {
+    let r = roots(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let sessions = live::live_sessions(&r);
+        let s = sessions.iter().find(|s| s.session_id == session_id).ok_or("that session is no longer running")?;
+        live::jump(s)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The hotkey: bring forward the session that has waited longest. With
+/// nothing waiting, open the panel instead.
+fn jump_to_longest_wait(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok(r) = roots(&app) else { return };
+        let sessions = tauri::async_runtime::spawn_blocking(move || live::live_sessions(&r)).await.unwrap_or_default();
+        set_badge(&app, sessions.iter().filter(|s| s.needs_you()).count());
+        match sessions.iter().find(|s| s.needs_you()) {
+            Some(s) if live::jump(s).is_ok() => {}
+            _ => show_panel(&app),
+        }
+    });
+}
+
+/// The number next to the menu-bar icon: sessions waiting on you.
+fn set_badge(app: &AppHandle, waiting: usize) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title(if waiting > 0 { Some(waiting.to_string()) } else { None });
+        let _ = tray.set_tooltip(Some(match waiting {
+            0 => "Agent Island".to_string(),
+            1 => "Agent Island: 1 session waiting on you".to_string(),
+            n => format!("Agent Island: {n} sessions waiting on you"),
+        }));
+    }
+}
+
+const HOTKEY: &str = "ctrl+alt+KeyJ";
+
 fn toggle_panel(app: &AppHandle) {
     let Some(w) = app.get_webview_window(PANEL) else { return };
     if w.is_visible().unwrap_or(false) {
         let _ = w.hide();
         return;
     }
+    show_panel(app);
+}
+
+fn show_panel(app: &AppHandle) {
+    let Some(w) = app.get_webview_window(PANEL) else { return };
     // The menu bar is at the top on macOS; the taskbar is usually at the bottom on Windows.
     #[cfg(target_os = "macos")]
     let _ = w.move_window(Position::TrayCenter);
@@ -60,7 +120,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit])
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts([HOTKEY])
+                .expect("valid hotkey")
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        jump_to_longest_wait(app);
+                    }
+                })
+                .build(),
+        )
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump])
         .setup(|app| {
             // Menu-bar only: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
@@ -90,6 +161,21 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Keep the badge current: a light check once a minute (one
+            // process listing plus the tail of each live session's log).
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    if let Ok(r) = roots(&handle) {
+                        let n = tauri::async_runtime::spawn_blocking(move || live::live_sessions(&r).iter().filter(|s| s.needs_you()).count())
+                            .await
+                            .unwrap_or(0);
+                        set_badge(&handle, n);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {

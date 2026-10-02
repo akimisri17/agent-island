@@ -9,38 +9,52 @@
 </head>
 <body>
 <header class="top">
-  <span class="brand">Agent Island <span class="view">· Wrapped</span></span>
-  <div class="seg" role="tablist" aria-label="Range">
+  <div class="tabs" role="tablist" aria-label="View">
+    <button role="tab" data-view="waiting" aria-selected="true">Waiting <span class="count" id="wcount"></span></button>
+    <button role="tab" data-view="wrapped" aria-selected="false">Wrapped</button>
+  </div>
+  <div class="seg wrapped-only" role="tablist" aria-label="Range" hidden>
     <button role="tab" data-days="7" aria-selected="true">7 days</button>
     <button role="tab" data-days="30" aria-selected="false">30 days</button>
   </div>
 </header>
 
-<div class="filters">
-  <select id="agent" aria-label="Agent"><option>All agents</option></select>
-  <select id="maker" aria-label="Model maker"><option>All models</option></select>
-</div>
+<section class="view" id="view-waiting" aria-live="polite">
+  <ul class="live" id="live"></ul>
+  <div class="empty" id="live-empty" hidden>
+    <div class="empty-title">Nothing is waiting on you</div>
+    <div class="muted">Running Claude Code and Codex sessions show up here when they finish or need approval.</div>
+  </div>
+</section>
 
-<main id="body" aria-live="polite">
-  <section class="hero">
-    <div class="persona" id="persona">Reading your agent logs…</div>
-    <div class="line" id="line">&nbsp;</div>
-    <div class="badges" id="badges"></div>
-  </section>
+<section class="view" id="view-wrapped" hidden>
+  <div class="filters">
+    <select id="agent" aria-label="Agent"><option>All agents</option></select>
+    <select id="maker" aria-label="Model maker"><option>All models</option></select>
+  </div>
 
-  <section class="tiles">
-    <div class="tile"><div class="num" id="hours">–</div><div class="cap">agent-hours</div></div>
-    <div class="tile accent"><div class="num" id="waited">–</div><div class="cap">hours waited on you</div></div>
-    <div class="tile"><div class="num" id="limits">–</div><div class="cap">limit hits</div></div>
-    <div class="tile"><div class="num" id="parallel">–</div><div class="cap">agents at once, peak</div></div>
-  </section>
+  <main id="body" aria-live="polite">
+    <section class="hero">
+      <div class="persona" id="persona">Reading your agent logs…</div>
+      <div class="line" id="line">&nbsp;</div>
+      <div class="badges" id="badges"></div>
+    </section>
 
-  <svg id="spark" class="spark" viewBox="0 0 300 36" preserveAspectRatio="none" aria-label="Agent-hours per day"></svg>
-  <div class="meta" id="meta">&nbsp;</div>
-</main>
+    <section class="tiles">
+      <div class="tile"><div class="num" id="hours">–</div><div class="cap">agent-hours</div></div>
+      <div class="tile accent"><div class="num" id="waited">–</div><div class="cap">hours waited on you</div></div>
+      <div class="tile"><div class="num" id="limits">–</div><div class="cap">limit hits</div></div>
+      <div class="tile"><div class="num" id="parallel">–</div><div class="cap">agents at once, peak</div></div>
+    </section>
+
+    <svg id="spark" class="spark" viewBox="0 0 300 36" preserveAspectRatio="none" aria-label="Agent-hours per day"></svg>
+    <div class="meta" id="meta">&nbsp;</div>
+  </main>
+
+  <button class="primary" id="report" disabled>Open full report</button>
+</section>
 
 <footer class="bottom">
-  <button class="primary" id="report" disabled>Open full report</button>
   <div class="row">
     <span id="updated" class="muted">&nbsp;</span>
     <span>

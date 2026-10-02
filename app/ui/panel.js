@@ -13,11 +13,106 @@ let days = 7;
 let busy = false;
 const filter = { agent: null, maker: null };
 let current = null; // { stats, meta } as shown, for the full report
+let view = 'waiting';
+const HOTKEY_HINT = '⌃⌥J jumps to the longest wait';
 
 try {
   Object.assign(filter, JSON.parse(localStorage.getItem('filter') || '{}'));
+  view = localStorage.getItem('view') === 'wrapped' ? 'wrapped' : 'waiting';
 } catch {
-  // storage unavailable: start unfiltered
+  // storage unavailable: start unfiltered, on Waiting
+}
+
+const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+const STATE_LABEL = { waiting: 'Finished', approval: 'Tool running or needs approval', working: 'Working' };
+
+function waitedFor(ms) {
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return 'now';
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.floor(h / 24)} d`;
+}
+
+function liveRow(s) {
+  const li = document.createElement('li');
+  li.className = s.state;
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  const title = document.createElement('span');
+  title.className = 'title';
+  title.textContent = s.title || s.project || 'Untitled session';
+  const age = document.createElement('span');
+  age.className = 'age';
+  age.textContent = s.state === 'working' ? '' : waitedFor(Date.now() - s.since);
+  if (s.state !== 'working') {
+    const small = document.createElement('small');
+    small.textContent = 'waiting';
+    age.append(small);
+  }
+  const sub = document.createElement('span');
+  sub.className = 'sub';
+  sub.textContent = [STATE_LABEL[s.state], AGENT_LABEL[s.agent] || s.agent, s.host && `in ${s.host}`, s.title && s.project].filter(Boolean).join(' · ');
+  li.append(dot, title, age, sub);
+  if (s.state !== 'working') {
+    li.tabIndex = 0;
+    li.title = `Open in ${s.host || 'its app'}`;
+    const go = async () => {
+      try {
+        await invoke('jump', { sessionId: s.sessionId });
+        window.__TAURI__.window.getCurrentWindow().hide();
+      } catch (e) {
+        $('updated').textContent = String(e);
+      }
+    };
+    li.addEventListener('click', go);
+    li.addEventListener('keydown', (e) => e.key === 'Enter' && go());
+  }
+  return li;
+}
+
+async function loadLive() {
+  let sessions;
+  try {
+    sessions = await invoke('live');
+  } catch (e) {
+    if (view === 'waiting') $('updated').textContent = `Could not list sessions: ${e}`;
+    return;
+  }
+  const waiting = sessions.filter((s) => s.state !== 'working');
+  const working = sessions.filter((s) => s.state === 'working');
+  $('wcount').textContent = waiting.length ? String(waiting.length) : '';
+  const items = waiting.map(liveRow);
+  if (working.length) {
+    const label = document.createElement('li');
+    label.className = 'section-label';
+    label.style.cssText = 'border:0;background:none;padding:0;cursor:default;display:block';
+    label.textContent = `Working (${working.length})`;
+    items.push(label, ...working.map(liveRow));
+  }
+  $('live').replaceChildren(...items);
+  $('live-empty').hidden = waiting.length > 0;
+  if (view === 'waiting') $('updated').textContent = HOTKEY_HINT;
+}
+
+function setView(v) {
+  view = v;
+  try {
+    localStorage.setItem('view', v);
+  } catch {
+    // not remembered across launches
+  }
+  for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === v));
+  $('view-waiting').hidden = v !== 'waiting';
+  $('view-wrapped').hidden = v !== 'wrapped';
+  document.querySelector('.wrapped-only').hidden = v !== 'wrapped';
+  if (v === 'waiting') {
+    $('updated').textContent = HOTKEY_HINT;
+    loadLive();
+  } else {
+    load();
+  }
 }
 
 const hours = (h) => (h >= 10 ? Math.round(h).toString() : h.toFixed(1));
@@ -106,17 +201,21 @@ function show({ stats: st, meta, at }) {
   // Cursor keeps no token counts locally: say so rather than show "0 tokens".
   const tokens = st.totalTokens ? `${fmtNum(st.totalTokens)} tokens` : 'tokens not recorded';
   $('meta').textContent = `${fmtNum(st.sessions)} sessions · ${fmtNum(st.filesEdited)} files · ${tokens}`;
-  $('updated').textContent = ago(at);
+  if (view === 'wrapped') $('updated').textContent = ago(at);
   spark(st);
 }
 
 async function load(force = false) {
   const hit = cache.get(days);
-  if (hit && !force && Date.now() - hit.at < STALE_MS) return render();
+  if (hit && !force && Date.now() - hit.at < STALE_MS) {
+    render();
+    $('updated').textContent = ago(hit.at);
+    return;
+  }
   if (hit) render();
   if (busy) return;
   busy = true;
-  $('updated').textContent = 'Reading logs…';
+  if (view === 'wrapped') $('updated').textContent = 'Reading logs…';
   try {
     const scan = await invoke('scan', { days });
     cache.set(days, { scan, at: Date.now() });
@@ -158,15 +257,19 @@ for (const key of ['agent', 'maker']) {
   });
 }
 $('report').addEventListener('click', openReport);
-$('refresh').addEventListener('click', () => load(true));
+$('refresh').addEventListener('click', () => (view === 'waiting' ? loadLive() : load(true)));
+for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => setView(b.dataset.view));
 $('quit').addEventListener('click', () => invoke('quit'));
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.__TAURI__.window.getCurrentWindow().hide();
 });
 
-listen('panel-shown', () => load());
+listen('panel-shown', () => {
+  loadLive(); // cheap: keeps the count current on both tabs
+  if (view === 'wrapped') load();
+});
 listen('open-report', async () => {
   if (!cache.get(days)) await load(true);
   openReport();
 });
-load();
+setView(view);
