@@ -22,7 +22,7 @@ To see live sessions from a terminal: `cd src-tauri && cargo run --example live`
 | Log readers | `src-tauri/src/logs.rs`, `cursor.rs`, `antigravity.rs`, `foreign.rs` | Rust ports of `wrapped/src/claude.mjs`, `codex.mjs`, `cursor.mjs`, `antigravity.mjs`, `sqlite.mjs`, `protobuf.mjs`. Reads about 6 GB in about 4 s |
 | Stats, personas, report | `ui/lib/` (copied from `wrapped/src/`) | The same code the CLI uses. Do not edit the copies |
 | Panel | `ui/index.html`, `panel.js`, `panel.css` | The popover |
-| Live sessions | `src-tauri/src/live.rs` | Running `claude`/`codex` processes → session log → state (finished, tool or approval, working); jump via AppleScript (Terminal, iTerm), `open -a` (editors, other apps) |
+| Live sessions | `src-tauri/src/live.rs` | Running `claude`/`codex` processes → session log → state (finished, tool or approval, working); Cursor chats from its database while Cursor runs; jump via AppleScript (Terminal, iTerm), `open -a` (editors, other apps) |
 | Shell | `src-tauri/src/lib.rs` | Tray icon and badge, popover window, global hotkey, `scan`, `live`, `jump`, `open_report` commands |
 
 `scripts/sync-lib.mjs` copies the shared JS before every dev run and build.
