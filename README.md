@@ -47,6 +47,7 @@ Click the menu-bar icon for a quick panel. Open the full report for the rest.
 - **An agents table**: sessions, prompts, hours, and responses for each agent.
 - **Models grouped by maker** (Anthropic, OpenAI, xAI, Google, …).
 - **Where the tokens went**: by project, by model, cache re-reads, subagents, and context compactions.
+- **Filters**: one agent (Claude Code, Codex, Cursor) or one model maker (Anthropic, OpenAI, xAI, …) at a time, in the panel and the report.
 - **A share card**: numbers only, with no project names, prompts, or paths.
 
 <p align="center">
@@ -97,7 +98,7 @@ node wrapped/bin/agent-wrapped.mjs          # your last 30 days
 node wrapped/bin/agent-wrapped.mjs --demo   # made-up data, no logs needed
 ```
 
-Options: `--days 7`, `--out report.html`, `--json`, `--no-open`. An `npx agent-wrapped` package is coming.
+Options: `--days 7`, `--agent cursor`, `--maker xAI`, `--out report.html`, `--json`, `--no-open`. An `npx agent-wrapped` package is coming.
 
 ### Build from source
 

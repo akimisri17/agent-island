@@ -1,16 +1,24 @@
 // The panel. Rust reads the logs; the same stats and report code as the CLI
 // (synced into ./lib by scripts/sync-lib.mjs) turns them into numbers.
-import { computeStats } from './lib/stats.mjs';
-import { renderHtml, fmtNum } from './lib/render.mjs';
+import { computeStats, filterSessions, filterOptions } from './lib/stats.mjs';
+import { renderHtml, fmtNum, AGENT_NAMES } from './lib/render.mjs';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const STALE_MS = 5 * 60_000; // re-read logs when the panel opens after this long
 const $ = (id) => document.getElementById(id);
-const cache = new Map(); // days -> { stats, meta, at }
+const cache = new Map(); // days -> { scan, at }: raw sessions, so filters need no re-read
 let days = 7;
 let busy = false;
+const filter = { agent: null, maker: null };
+let current = null; // { stats, meta } as shown, for the full report
+
+try {
+  Object.assign(filter, JSON.parse(localStorage.getItem('filter') || '{}'));
+} catch {
+  // storage unavailable: start unfiltered
+}
 
 const hours = (h) => (h >= 10 ? Math.round(h).toString() : h.toFixed(1));
 
@@ -44,10 +52,40 @@ function spark(st) {
   }));
 }
 
+function fillSelect(el, all, values, label, selected) {
+  el.replaceChildren(new Option(all, ''), ...values.map((v) => new Option(label(v), v)));
+  el.value = values.includes(selected) ? selected : '';
+  el.disabled = values.length < 2 && !selected;
+}
+
+// Applies the agent and maker filters to the cached scan and redraws.
+function render() {
+  const hit = cache.get(days);
+  if (!hit) return;
+  const { scan, at } = hit;
+  const agents = filterOptions(scan.sessions).agents;
+  if (filter.agent && !agents.includes(filter.agent)) filter.agent = null;
+  const byAgent = filterSessions(scan.sessions, { agent: filter.agent });
+  const makers = filterOptions(byAgent).makers;
+  if (filter.maker && !makers.includes(filter.maker)) filter.maker = null;
+  fillSelect($('agent'), 'All agents', agents, (a) => AGENT_NAMES[a] || a, filter.agent);
+  fillSelect($('maker'), 'All models', makers, (m) => `${m} models`, filter.maker);
+
+  const stats = computeStats(filterSessions(byAgent, { maker: filter.maker }), { since: scan.since, until: scan.until });
+  const meta = { files: scan.files, bytes: scan.bytes, seconds: scan.seconds, filter: { ...filter } };
+  current = { stats, meta };
+  show({ stats, meta, at });
+}
+
 function show({ stats: st, meta, at }) {
   if (meta.files.claude + meta.files.codex + (meta.files.cursor || 0) === 0) {
     $('persona').textContent = 'No agent logs yet';
     $('line').textContent = `Nothing from Claude Code, Codex, or Cursor in the last ${days} days.`;
+    $('badges').replaceChildren();
+    $('report').disabled = true;
+  } else if (st.sessions === 0) {
+    $('persona').textContent = 'Nothing for this filter';
+    $('line').textContent = 'No sessions you started match it in this range.';
     $('badges').replaceChildren();
     $('report').disabled = true;
   } else {
@@ -65,24 +103,24 @@ function show({ stats: st, meta, at }) {
   $('waited').textContent = hours(st.waitHours);
   $('limits').textContent = String(st.limitHits.length);
   $('parallel').textContent = String(st.peakParallel);
-  $('meta').textContent = `${fmtNum(st.sessions)} sessions · ${fmtNum(st.filesEdited)} files · ${fmtNum(st.totalTokens)} tokens`;
+  // Cursor keeps no token counts locally: say so rather than show "0 tokens".
+  const tokens = st.totalTokens ? `${fmtNum(st.totalTokens)} tokens` : 'tokens not recorded';
+  $('meta').textContent = `${fmtNum(st.sessions)} sessions · ${fmtNum(st.filesEdited)} files · ${tokens}`;
   $('updated').textContent = ago(at);
   spark(st);
 }
 
 async function load(force = false) {
   const hit = cache.get(days);
-  if (hit && !force && Date.now() - hit.at < STALE_MS) return show(hit);
-  if (hit) show(hit);
+  if (hit && !force && Date.now() - hit.at < STALE_MS) return render();
+  if (hit) render();
   if (busy) return;
   busy = true;
   $('updated').textContent = 'Reading logs…';
   try {
-    const r = await invoke('scan', { days });
-    const stats = computeStats(r.sessions, { since: r.since, until: r.until });
-    const entry = { stats, meta: { files: r.files, bytes: r.bytes, seconds: r.seconds }, at: Date.now() };
-    cache.set(days, entry);
-    show(entry);
+    const scan = await invoke('scan', { days });
+    cache.set(days, { scan, at: Date.now() });
+    render();
   } catch (e) {
     $('updated').textContent = `Could not read logs: ${e}`;
     $('updated').classList.add('error');
@@ -92,10 +130,9 @@ async function load(force = false) {
 }
 
 async function openReport() {
-  const entry = cache.get(days);
-  if (!entry) return;
+  if (!current) return;
   try {
-    await invoke('open_report', { html: renderHtml(entry.stats, entry.meta) });
+    await invoke('open_report', { html: renderHtml(current.stats, current.meta) });
   } catch (e) {
     $('updated').textContent = `Could not open report: ${e}`;
   }
@@ -106,6 +143,18 @@ for (const b of document.querySelectorAll('.seg button')) {
     days = Number(b.dataset.days);
     for (const o of document.querySelectorAll('.seg button')) o.setAttribute('aria-selected', String(o === b));
     load();
+  });
+}
+for (const key of ['agent', 'maker']) {
+  $(key).addEventListener('change', () => {
+    filter[key] = $(key).value || null;
+    if (key === 'agent') filter.maker = null; // makers depend on the agent
+    try {
+      localStorage.setItem('filter', JSON.stringify(filter));
+    } catch {
+      // not remembered across launches; still applied now
+    }
+    render();
   });
 }
 $('report').addEventListener('click', openReport);

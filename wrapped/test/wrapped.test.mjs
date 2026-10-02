@@ -125,3 +125,22 @@ test('personas: strongest is the title, next two are badges', async () => {
   assert.equal(poly.name, 'The Polyglot');
   assert.match(poly.line, /Anthropic, xAI, OpenAI/);
 });
+
+test('filters: by agent, by main model maker, and the options offered', async () => {
+  const { filterSessions, filterOptions, primaryMaker } = await import('../src/stats.mjs');
+  const a = await parseClaudeFile(fx('claude-session.jsonl'), { since });
+  const b = await parseCodexFile(fx('codex-rollout.jsonl'), { since });
+  const { parseCursorDb } = await import('../src/cursor.mjs');
+  const c = await parseCursorDb(fx('cursor-state.vscdb'), { since });
+  const all = [a, b, ...c];
+  assert.equal(primaryMaker(a), 'Anthropic');
+  assert.equal(primaryMaker(b), 'OpenAI');
+  assert.equal(primaryMaker(c.find((s) => s.id === 'k1')), 'xAI');
+  assert.deepEqual(filterSessions(all, { agent: 'codex' }).map((s) => s.id), ['c1']);
+  assert.deepEqual(filterSessions(all, { maker: 'xAI' }).map((s) => s.id), ['k1']);
+  assert.deepEqual(filterSessions(all, { agent: 'cursor', maker: 'Cursor' }).map((s) => s.id), ['sub']);
+  assert.equal(filterSessions(all, {}).length, all.length);
+  const opts = filterOptions(all);
+  assert.deepEqual([...opts.agents].sort(), ['claude', 'codex', 'cursor']);
+  assert.deepEqual([...opts.makers].sort(), ['Anthropic', 'Cursor', 'OpenAI', 'xAI']);
+});

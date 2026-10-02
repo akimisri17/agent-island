@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
 import { scan, defaultRoots } from '../src/scan.mjs';
-import { computeStats } from '../src/stats.mjs';
+import { computeStats, filterSessions, filterOptions } from '../src/stats.mjs';
 import { renderHtml } from '../src/render.mjs';
 import { demoSessions } from '../src/demo.mjs';
 
@@ -14,12 +14,15 @@ Reads Claude Code (~/.claude/projects), Codex (~/.codex/sessions), and Cursor
 sent anywhere.
 
 Usage: agent-wrapped [--days 30] [--out agent-wrapped.html] [--json] [--no-open] [--demo]
+                     [--agent claude|codex|cursor] [--maker Anthropic|OpenAI|xAI|...]
 
-  --demo   made-up data, to see the report without any agent logs
+  --demo    made-up data, to see the report without any agent logs
+  --agent   only sessions from one agent
+  --maker   only sessions whose main model is from one maker
 `;
 
 function parseArgs(argv) {
-  const opts = { days: 30, out: 'agent-wrapped.html', json: false, open: true, demo: false };
+  const opts = { days: 30, out: 'agent-wrapped.html', json: false, open: true, demo: false, agent: null, maker: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') opts.help = true;
@@ -28,6 +31,8 @@ function parseArgs(argv) {
     else if (a === '--json') opts.json = true;
     else if (a === '--no-open') opts.open = false;
     else if (a === '--demo') opts.demo = true;
+    else if (a === '--agent') opts.agent = argv[++i]?.toLowerCase();
+    else if (a === '--maker') opts.maker = argv[++i];
     else throw new Error(`Unknown option: ${a}`);
   }
   if (!Number.isFinite(opts.days) || opts.days <= 0) throw new Error('--days must be a positive number');
@@ -60,7 +65,15 @@ async function main() {
   });
   if (tty) process.stderr.write('\r\x1b[K');
   const seconds = (Date.now() - t0) / 1000;
-  const stats = computeStats(result.sessions, { since, until });
+  const options = filterOptions(result.sessions);
+  if (opts.agent && !options.agents.includes(opts.agent)) throw new Error(`no ${opts.agent} sessions in this window (found: ${options.agents.join(', ') || 'none'})`);
+  if (opts.maker) {
+    const match = options.makers.find((m) => m.toLowerCase() === opts.maker.toLowerCase());
+    if (!match) throw new Error(`no sessions with ${opts.maker} models (found: ${options.makers.join(', ') || 'none'})`);
+    opts.maker = match;
+  }
+  const filter = { agent: opts.agent, maker: opts.maker };
+  const stats = computeStats(filterSessions(result.sessions, filter), { since, until });
 
   if (opts.json) {
     const { minutesByDay, minutesByHour, ...rest } = stats;
@@ -74,7 +87,7 @@ async function main() {
   }
 
   const out = resolve(opts.out);
-  await writeFile(out, renderHtml(stats, { files: result.files, bytes: result.bytes, seconds }));
+  await writeFile(out, renderHtml(stats, { files: result.files, bytes: result.bytes, seconds, filter }));
   process.stderr.write(`${stats.persona.name}. ${stats.persona.line}\nWrote ${out}\n`);
   if (opts.open) openFile(out);
 }

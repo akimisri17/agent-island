@@ -18,6 +18,37 @@ function topEntries(obj, n) {
   return Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
 }
 
+// The maker behind most of a session's responses (or output tokens, for
+// sessions that recorded no responses). Null when the session named no model.
+export function primaryMaker(s) {
+  const counts = Object.keys(s.responses || {}).length ? s.responses : s.models;
+  let best = null;
+  let most = -1;
+  const byMaker = {};
+  for (const [m, n] of Object.entries(counts || {})) byMaker[makerOf(m)] = (byMaker[makerOf(m)] || 0) + n;
+  for (const [maker, n] of Object.entries(byMaker)) if (n > most) [best, most] = [maker, n];
+  return best;
+}
+
+// Agents and makers present in a scan, most active first, for filter menus.
+export function filterOptions(sessions) {
+  const agents = {};
+  const makers = {};
+  for (const s of sessions) {
+    const weight = s.turns.length + Object.values(s.responses || {}).reduce((a, b) => a + b, 0);
+    agents[s.agent] = (agents[s.agent] || 0) + weight;
+    const m = primaryMaker(s);
+    if (m) makers[m] = (makers[m] || 0) + weight;
+  }
+  const order = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return { agents: order(agents), makers: order(makers) };
+}
+
+// Keeps sessions from one agent and/or whose main model is from one maker.
+export function filterSessions(sessions, { agent = null, maker = null } = {}) {
+  return sessions.filter((s) => (!agent || s.agent === agent) && (!maker || primaryMaker(s) === maker));
+}
+
 export function computeStats(sessions, { since, until }) {
   // "Yours" means a person typed at least one prompt. Sessions with no human
   // prompt are plugins and scripts driving the agent (for example claude-mem).
