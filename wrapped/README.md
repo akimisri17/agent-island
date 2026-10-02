@@ -6,7 +6,7 @@ The Wrapped view of Agent Island as a zero-install command: a report of what you
 node bin/agent-wrapped.mjs
 ```
 
-Options: `--days 7`, `--out report.html`, `--json` (stats only), `--no-open`.
+Options: `--days 7`, `--agent claude|codex|cursor`, `--maker Anthropic|OpenAI|xAI|…` (sessions whose main model is from that maker), `--out report.html`, `--json` (stats only), `--no-open`, `--demo` (made-up data).
 
 ## What it reads
 

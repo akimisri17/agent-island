@@ -62,6 +62,8 @@ function rankList(rows, fmt, { mask = false } = {}) {
 
 export function renderHtml(st, meta) {
   const agents = Object.keys(st.byAgent).map(agentName).join(' + ') || 'no agents';
+  const f = meta.filter || {};
+  const filterLabel = [f.agent && agentName(f.agent), f.maker && `${f.maker} models`].filter(Boolean).join(' · ');
   const badges = st.persona.badges || [];
   const agentRows = Object.entries(st.byAgent).sort((a, b) => b[1].hours - a[1].hours).map(([a, r]) => `
     <tr><td>${esc(agentName(a))}</td><td>${fmtNum(r.sessions)}</td><td>${fmtNum(r.prompts)}</td><td>${fmtHours(r.hours)}</td><td>${fmtNum(r.responses)}</td><td>${r.tokens ? fmtNum(r.tokens) : '<span class="muted">not recorded</span>'}</td></tr>`).join('');
@@ -72,7 +74,7 @@ export function renderHtml(st, meta) {
     persona: st.persona,
     badges: badges.map((b) => b.name.replace(/^The /, '')),
     window: `${fmtDate(st.window.since)} – ${fmtDate(st.window.until)}`,
-    agents,
+    agents: filterLabel ? `${agents} · ${filterLabel} only` : agents,
     stats: [
       [fmtHours(st.agentHours), 'agent-hours'],
       [fmtNum(st.sessions), 'sessions'],
@@ -105,6 +107,7 @@ body { margin: 0; background: var(--bg); color: var(--ink);
 main { max-width: 820px; margin: 0 auto; padding: 48px 16px 80px; }
 header { margin-bottom: 36px; }
 .eyebrow { color: var(--muted); font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+.eyebrow .filter { color: var(--accent); }
 h1 { font-size: clamp(36px, 7vw, 56px); line-height: 1.05; margin: 8px 0 10px; letter-spacing: -.02em; }
 h1 em { font-style: normal; color: var(--accent); }
 .lede { font-size: 18px; color: var(--muted); margin: 0; }
@@ -162,7 +165,7 @@ footer ul { padding-left: 18px; }
 <body>
 <main>
 <header>
-  <div class="eyebrow">Agent Wrapped · ${esc(share.window)} · ${esc(agents)}</div>
+  <div class="eyebrow">Agent Wrapped · ${esc(share.window)} · ${esc(agents)}${filterLabel ? ` · <b class="filter">${esc(filterLabel)} only</b>` : ''}</div>
   <h1>You are <em>${esc(st.persona.name)}</em>.</h1>
   <p class="lede">${esc(st.persona.line)}</p>
   ${badges.length ? `<ul class="badges">${badges.map((b) => `<li title="${esc(b.line)}"><b>${esc(b.name)}</b> · ${esc(b.line)}</li>`).join('')}</ul>` : ''}
