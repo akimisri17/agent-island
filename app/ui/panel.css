@@ -38,6 +38,19 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .live .sub { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; grid-column: 2; }
 .live .age { font-variant-numeric: tabular-nums; font-weight: 600; grid-row: span 2; text-align: right; }
 .live .age small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
+.limits { border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; background: var(--panel); display: flex; flex-direction: column; gap: 6px; }
+.limits.limited, .limits.high { border-color: var(--accent); }
+.limit-row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.limit-name { font-weight: 600; }
+.limit-status { color: var(--muted); font-size: 12px; text-align: right; }
+.limits.limited .limit-status, .limits.high .limit-status { color: var(--accent); font-weight: 600; }
+.hits { display: flex; gap: 3px; align-items: center; }
+.hits i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--muted); }
+.hits i.on { background: var(--accent); border-color: var(--accent); }
+.hits span { color: var(--muted); font-size: 11px; margin-left: 4px; }
+.advice { font-size: 12px; color: var(--ink); }
+.meter { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.meter b { display: block; height: 100%; background: var(--bar); }
 .section-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 4px 0 -2px; }
 .empty { margin: auto 0; text-align: center; padding: 0 12px; }
 .empty-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
