@@ -46,9 +46,13 @@ Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that h
 - **Finished:** the agent ended its turn and is waiting for your next message.
 - **Tool running or needs approval:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
 - **Where the jump lands:**
-  - Terminal and iTerm: the exact tab.
-  - VS Code, Cursor, Windsurf, Zed: the window for that folder.
-  - Anything else, such as the Claude desktop app, Ghostty or Warp: the app comes to the front.
+  - macOS:
+    - Terminal and iTerm: the exact tab.
+    - VS Code, Cursor, Windsurf, Zed: the window for that folder.
+    - Anything else, such as the Claude desktop app, Ghostty or Warp: the app comes to the front.
+  - Windows (not yet tested on a real machine):
+    - VS Code, Cursor, Windsurf, Zed: the window for that folder.
+    - Windows Terminal, the Claude desktop app, WezTerm, Alacritty and others: their window comes to the front. Windows Terminal can't be asked for a specific tab.
 - **Covers** running Claude Code and Codex sessions, and Cursor chats. Cursor runs every chat inside one app, so while Cursor is open, chats active in the last 12 hours count as live. Cursor also says whether you've read the reply yet. Plugin- and script-driven sessions are left out.
 
 The Waiting tab lists the same sessions, longest wait first. Click one to jump to it.
@@ -204,7 +208,8 @@ Personas are judged against thresholds that are guesses for now. They'll be tune
 - [x] **Waiting**: ⌃⌥J jumps to the session that has waited longest; count in the menu bar
 - [x] Waiting: Cursor chats
 - [x] Settings: choose your own hotkey
-- [ ] Waiting: Windows jump; Antigravity live sessions
+- [x] Waiting: Windows jump (built, not yet tested on a real Windows machine)
+- [ ] Waiting: Antigravity live sessions
 - [x] **Limits**: exact reset when limited, how this window compares with your past limit hits, official Codex percentages, one suggested move
 - [x] Limits: notifications when close, when limited, and on reset
 - [ ] Limits: Claude's weekly limit (no local data for it yet)
