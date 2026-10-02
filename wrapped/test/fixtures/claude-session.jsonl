@@ -1,0 +1,11 @@
+{"type":"custom-title","customTitle":"Fix login bug","sessionId":"s1"}
+{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"fix the login bug"},"timestamp":"2026-09-10T10:00:00.000Z","cwd":"/work/shop","sessionId":"s1"}
+{"type":"assistant","message":{"id":"m1","model":"claude-sonnet-5","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/work/shop/login.ts"}}],"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":100,"output_tokens":50}},"timestamp":"2026-09-10T10:01:00.000Z","cwd":"/work/shop"}
+{"type":"assistant","message":{"id":"m1","model":"claude-sonnet-5","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":100,"output_tokens":50}},"timestamp":"2026-09-10T10:01:05.000Z","cwd":"/work/shop"}
+{"type":"user","toolUseResult":{},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"timestamp":"2026-09-10T10:02:00.000Z","cwd":"/work/shop"}
+{"type":"user","message":{"role":"user","content":"<task-notification>agent finished</task-notification>"},"timestamp":"2026-09-10T10:03:00.000Z","cwd":"/work/shop"}
+{"type":"user","message":{"role":"user","content":"now add a test"},"timestamp":"2026-09-10T10:13:00.000Z","cwd":"/work/shop"}
+{"type":"assistant","message":{"id":"m2","model":"claude-opus-5","content":[{"type":"tool_use","name":"Write","input":{"file_path":"/work/shop/login.test.ts"}}],"usage":{"input_tokens":5,"cache_read_input_tokens":2000,"cache_creation_input_tokens":0,"output_tokens":80}},"timestamp":"2026-09-10T10:20:00.000Z","cwd":"/work/shop","quotaLimits":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1789000000}}
+{"type":"assistant","message":{"id":"m3","model":"claude-opus-5","content":[],"usage":{"input_tokens":0,"output_tokens":0}},"timestamp":"2026-09-10T10:20:30.000Z","cwd":"/work/shop","quotaLimits":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1789000000}}
+{"type":"user","isCompactSummary":true,"isMeta":true,"message":{"role":"user","content":"summary"},"timestamp":"2026-09-10T10:21:00.000Z"}
+{"type":"assistant","message":{"id":"m4","model":"claude-opus-5","content":[

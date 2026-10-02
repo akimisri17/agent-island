@@ -1,0 +1,30 @@
+[package]
+name = "agent-island"
+version = "0.1.0"
+description = "Watches your coding agents, locally"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "agent_island_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+rayon = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

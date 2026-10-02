@@ -1,0 +1,21 @@
+{
+  "name": "agent-wrapped",
+  "version": "0.1.0",
+  "description": "A local report of what your coding agents did in the last 30 days. Reads Claude Code and Codex logs on this machine. Sends nothing anywhere.",
+  "type": "module",
+  "bin": {
+    "agent-wrapped": "bin/agent-wrapped.mjs"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "start": "node bin/agent-wrapped.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

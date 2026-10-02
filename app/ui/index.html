@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Island</title>
+<link rel="stylesheet" href="panel.css">
+<script type="module" src="panel.js"></script>
+</head>
+<body>
+<header class="top">
+  <span class="brand">Agent Island <span class="view">· Wrapped</span></span>
+  <div class="seg" role="tablist" aria-label="Range">
+    <button role="tab" data-days="7" aria-selected="true">7 days</button>
+    <button role="tab" data-days="30" aria-selected="false">30 days</button>
+  </div>
+</header>
+
+<main id="body" aria-live="polite">
+  <section class="hero">
+    <div class="persona" id="persona">Reading your agent logs…</div>
+    <div class="line" id="line">&nbsp;</div>
+    <div class="badges" id="badges"></div>
+  </section>
+
+  <section class="tiles">
+    <div class="tile"><div class="num" id="hours">–</div><div class="cap">agent-hours</div></div>
+    <div class="tile accent"><div class="num" id="waited">–</div><div class="cap">hours waited on you</div></div>
+    <div class="tile"><div class="num" id="limits">–</div><div class="cap">limit hits</div></div>
+    <div class="tile"><div class="num" id="parallel">–</div><div class="cap">agents at once, peak</div></div>
+  </section>
+
+  <svg id="spark" class="spark" viewBox="0 0 300 36" preserveAspectRatio="none" aria-label="Agent-hours per day"></svg>
+  <div class="meta" id="meta">&nbsp;</div>
+</main>
+
+<footer class="bottom">
+  <button class="primary" id="report" disabled>Open full report</button>
+  <div class="row">
+    <span id="updated" class="muted">&nbsp;</span>
+    <span>
+      <button class="link" id="refresh">Refresh</button>
+      <button class="link" id="quit">Quit</button>
+    </span>
+  </div>
+</footer>
+</body>
+</html>

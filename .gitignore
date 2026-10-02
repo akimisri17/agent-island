@@ -1,0 +1,33 @@
+# Local study clone of https://github.com/Louis-CFM/coucou
+# Kept on disk only. Code is MIT; name, character, icon, sounds, and media are not.
+reference/
+
+# Strategy docs (market, research, plans). Private: their own git repo inside
+# docs/internal/, pushed only to a private remote.
+docs/internal/
+
+# Generated reports contain the person's own project names, titles, and usage.
+# Never commit one, including your own.
+agent-wrapped*.html
+agent-wrapped*.png
+agent-wrapped*.json
+
+# Per-machine Claude Code settings (permissions granted on this laptop).
+.claude/settings.local.json
+
+# Dependencies and build output
+node_modules/
+dist/
+target/
+coverage/
+*.log
+
+# OS and secrets
+.DS_Store
+Thumbs.db
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.mobileprovision

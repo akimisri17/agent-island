@@ -1,0 +1,68 @@
+# Builds the Agent Island desktop app for macOS (Apple silicon + Intel) and
+# Windows. Runs on tags like app-v0.1.0, or by hand from the Actions tab.
+# Uploads unsigned installers as a draft release. Signing secrets go here later.
+name: app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['app-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+        working-directory: wrapped
+      - uses: dtolnay/rust-toolchain@stable
+      - run: node scripts/sync-lib.mjs
+        working-directory: app
+      - run: cargo test --lib
+        working-directory: app/src-tauri
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --target aarch64-apple-darwin --bundles app,dmg
+          - os: macos-latest
+            args: --target x86_64-apple-darwin --bundles app,dmg
+          - os: windows-latest
+            args: --bundles msi,nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: app/src-tauri }
+      - run: npm ci
+        working-directory: app
+      - uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: app
+          args: ${{ matrix.args }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: Agent Island ${{ github.ref_name }}
+          releaseDraft: true
+      # Manual runs have no tag, so no release: keep the installers as artifacts.
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: agent-island-${{ matrix.os }}-${{ strategy.job-index }}
+          path: |
+            app/src-tauri/target/**/release/bundle/dmg/*.dmg
+            app/src-tauri/target/**/release/bundle/msi/*.msi
+            app/src-tauri/target/**/release/bundle/nsis/*.exe
