@@ -34,7 +34,7 @@ export function buildRecap({ sessions, commits = [], live = [], now = Date.now()
     if (p) p.commits.push(...repo.commits);
   }
   const projects = [...byProject.values()]
-    .filter((p) => p.ms > 0 || p.commits.length)
+    .filter((p) => p.ms >= 60_000 || p.commits.length) // under a minute is noise
     .sort((a, b) => b.ms - a.ms)
     .map((p) => ({
       project: p.project,
@@ -47,7 +47,7 @@ export function buildRecap({ sessions, commits = [], live = [], now = Date.now()
     }));
 
   const waiting = live
-    .filter((s) => s.state !== 'working')
+    .filter((s) => s.state === 'waiting' || s.state === 'approval')
     .sort((a, b) => a.since - b.since)
     .map((s) => ({ title: s.title || s.project || 'Untitled session', project: s.project, waited: waitedFor(now - s.since), approval: s.state === 'approval' }));
   const totalMs = projects.reduce((n, p) => n + p.ms, 0);
@@ -60,20 +60,26 @@ export function buildRecap({ sessions, commits = [], live = [], now = Date.now()
   };
   const next = waiting[0] || null;
 
-  const date = new Date(now).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-  const lines = [`Today (${date}): ${totals.time} of agent work across ${plural(totals.projects, 'project')}, ${plural(commitCount, 'commit')}.`];
-  for (const p of projects) {
-    const bits = [p.titles.length ? p.titles.join('; ') : 'agent work'];
-    const counts = [p.files && plural(p.files, 'file'), p.commits.length && plural(p.commits.length, 'commit')].filter(Boolean).join(', ');
-    if (counts) bits.push(counts);
-    lines.push(`- ${p.project} (${p.agents.join(', ')}, ${p.time}): ${bits.join('. ')}.`);
-    for (const c of p.commits.slice(0, 3)) lines.push(`    - ${c}`);
-  }
-  if (waiting.length) lines.push(`Waiting on me: ${waiting.map((w) => `${w.title}${w.project && w.project !== w.title ? ` (${w.project})` : ''}`).join('; ')}.`);
-  if (next) lines.push(`Next: pick up "${next.title}".`);
-  return { totals, projects, waiting, next, text: lines.join('\n') };
+  return { totals, projects, waiting, next, text: standupText(projects, next) };
 }
 
-function plural(n, word) {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
+// What gets pasted into a standup: Done / In progress / Next, in the usual
+// shape. Done comes from commit messages, the one record of finished work;
+// In progress from session titles. Agent names, minutes and file counts stay
+// in the panel, and so does the private "waiting on me" queue. Empty
+// sections are left out.
+function standupText(projects, next) {
+  const tidy = (t) => t.charAt(0).toUpperCase() + t.slice(1).replace(/\.$/, '');
+  const done = projects.flatMap((p) => p.commits.slice(0, 5).map((c) => `- ${p.project}: ${tidy(c)}`));
+  const doing = projects
+    .filter((p) => p.ms >= 60_000)
+    .map((p) => {
+      const titles = p.titles.filter((t) => t.toLowerCase() !== p.project.toLowerCase()).map(tidy);
+      return titles.length ? `- ${p.project}: ${titles.join('; ')}` : `- ${p.project}`;
+    });
+  const sections = [];
+  if (done.length) sections.push(['Done', ...done].join('\n'));
+  if (doing.length) sections.push(['In progress', ...doing].join('\n'));
+  if (next) sections.push(`Next\n- ${next.project && next.project !== next.title ? `${next.project}: ` : ''}${tidy(next.title)}`);
+  return sections.length ? sections.join('\n\n') : 'No agent work today.';
 }

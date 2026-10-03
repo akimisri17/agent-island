@@ -44,7 +44,8 @@ Usage meters show how much is left right now. Agent Island tracks the sessions t
 Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that has waited longest for you. To use a different shortcut, open Settings (the gear in the panel), click the hotkey, and press a new one. The number next to the menu-bar icon shows how many sessions are waiting.
 
 - **Finished:** the agent ended its turn and is waiting for your next message.
-- **Tool running or needs approval:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
+- **Approval or long tool:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
+- **Idle:** a tool call or approval has gone unanswered for more than 30 minutes, which means the session stopped rather than needing you now. Idle and working sessions sit in collapsed groups below the list and don't count toward the menu-bar number.
 - **Where the jump lands:**
   - macOS:
     - Terminal and iTerm: the exact tab.
@@ -76,7 +77,7 @@ The **Today** tab shows what agents did today, project by project:
 - today's git commits in those repos (your own commits, by your git email)
 - what's still waiting on you, and which session to pick up next
 
-**Copy for standup** puts it on your clipboard as plain text.
+**Copy for standup** puts a standup-ready version on your clipboard: **Done** (today's commit messages), **In progress** (session titles by project) and **Next** (the session that has waited longest). Agent names, minutes, file counts and your waiting list stay in the panel, not in what you paste.
 
 **Polish with Claude** is optional and off by default. Turn it on in Settings, and it rewrites the recap through *your own* installed `claude` command (`claude -p`), using your plan's usage. This sends today's session titles, project names and file names to Claude. It runs with no tools, without saving a session, and without your user plugins or hooks. It's the only thing in Agent Island that sends anything off your machine, and only when you click it.
 

@@ -31,21 +31,25 @@ const hotkeyHint = () => `${hotkeyLabel(prefs.hotkey)} jumps to the longest wait
 
 try {
   Object.assign(filter, JSON.parse(localStorage.getItem('filter') || '{}'));
-  view = localStorage.getItem('view') === 'wrapped' ? 'wrapped' : 'waiting';
+  view = ['today', 'wrapped'].includes(localStorage.getItem('view')) ? localStorage.getItem('view') : 'waiting';
 } catch {
   // storage unavailable: start unfiltered, on Waiting
 }
 
-const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
-const STATE_LABEL = { waiting: 'Finished', approval: 'Tool running or needs approval', working: 'Working' };
+const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', antigravity: 'Antigravity' };
+// From the log alone, a pending approval and a long-running tool look the
+// same; after 30 minutes the backend calls it idle (stopped mid-tool).
+const STATE_LABEL = { waiting: 'Finished', approval: 'Approval or long tool', idle: 'Stopped mid-tool', working: 'Working' };
+const HOST_LABEL = { Claude: 'Claude app', 'Visual Studio Code': 'VS Code', iTerm: 'iTerm', iTerm2: 'iTerm', WindowsTerminal: 'Terminal' };
 
+// Compact ages for the list: "now", "47m", "17h", "2d".
 function waitedFor(ms) {
   const m = Math.floor(ms / 60_000);
   if (m < 1) return 'now';
-  if (m < 60) return `${m} min`;
+  if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
-  if (h < 48) return `${h} h`;
-  return `${Math.floor(h / 24)} d`;
+  if (h < 48) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
 }
 
 function liveRow(s) {
@@ -59,17 +63,14 @@ function liveRow(s) {
   const age = document.createElement('span');
   age.className = 'age';
   age.textContent = s.state === 'working' ? '' : waitedFor(Date.now() - s.since);
-  if (s.state !== 'working') {
-    const small = document.createElement('small');
-    small.textContent = 'waiting';
-    age.append(small);
-  }
+  age.title = s.state === 'working' ? '' : `Since ${new Date(s.since).toLocaleString()}`;
   const sub = document.createElement('span');
   sub.className = 'sub';
-  const host = s.host && s.host !== AGENT_LABEL[s.agent] ? `in ${s.host}` : null;
-  sub.textContent = [s.unread ? `${STATE_LABEL[s.state]}, unread` : STATE_LABEL[s.state], AGENT_LABEL[s.agent] || s.agent, host, s.title && s.project].filter(Boolean).join(' · ');
+  const where = (s.host && (HOST_LABEL[s.host] || s.host)) || AGENT_LABEL[s.agent] || s.agent;
+  const state = s.unread ? `${STATE_LABEL[s.state]}, unread` : STATE_LABEL[s.state];
+  sub.textContent = [state, where, s.title && s.project].filter(Boolean).join(' · ');
   li.append(dot, title, age, sub);
-  if (s.state !== 'working') {
+  if (s.state === 'waiting' || s.state === 'approval') {
     li.tabIndex = 0;
     li.title = `Open in ${s.host || 'its app'}`;
     const go = async () => {
@@ -96,19 +97,18 @@ async function loadLive() {
     return;
   }
   lastLive = sessions;
-  const waiting = sessions.filter((s) => s.state !== 'working');
+  const needs = sessions.filter((s) => s.state === 'waiting' || s.state === 'approval');
+  const idle = sessions.filter((s) => s.state === 'idle');
   const working = sessions.filter((s) => s.state === 'working');
-  $('wcount').textContent = waiting.length ? String(waiting.length) : '';
-  const items = waiting.map(liveRow);
-  if (working.length) {
-    const label = document.createElement('li');
-    label.className = 'section-label';
-    label.style.cssText = 'border:0;background:none;padding:0;cursor:default;display:block';
-    label.textContent = `Working (${working.length})`;
-    items.push(label, ...working.map(liveRow));
+  $('wcount').textContent = needs.length ? String(needs.length) : '';
+  $('live').replaceChildren(...needs.map(liveRow));
+  $('live-empty').hidden = needs.length > 0;
+  // Idle and working sessions are folded away: they are not asking for you.
+  for (const [name, list] of [['idle', idle], ['working', working]]) {
+    $(name).replaceChildren(...list.map(liveRow));
+    $(`${name}-count`).textContent = String(list.length);
+    $(`${name}-group`).hidden = list.length === 0;
   }
-  $('live').replaceChildren(...items);
-  $('live-empty').hidden = waiting.length > 0;
   if (view === 'waiting') $('updated').textContent = hotkeyHint();
 }
 
@@ -138,13 +138,14 @@ async function loadLimits(force = false) {
   if (c) {
     tone = c.risk;
     const status =
-      c.risk === 'limited' ? `Limit reached · resets ${clock(c.limitedUntil)}`
-      : c.windowResets ? `Window resets about ${clock(c.windowResets)}`
-      : 'No usage in the last 5 hours';
+      c.risk === 'limited' ? `Limited · resets ${clock(c.limitedUntil)}`
+      : c.windowResets ? `resets about ${clock(c.windowResets)}`
+      : 'no usage in 5 hours';
     const row = el('div', 'limit-row');
     row.append(el('span', 'limit-name', 'Claude 5-hour'), el('span', 'limit-status', status));
     rows.push(row);
-    if (c.pastHits > 0 && c.risk !== 'limited') {
+    // The dots only matter once this window has passed some earlier hit.
+    if (c.pastHits > 0 && c.passed > 0 && c.risk !== 'limited') {
       // One dot per past limit hit; filled once this window has passed the
       // usage that came before it. No percentage: the limit is shared with
       // claude.ai, which leaves no local trace.
@@ -158,14 +159,13 @@ async function loadLimits(force = false) {
   }
   for (const w of l.codex || []) {
     const row = el('div', 'limit-row');
-    const detail = [w.minutesToFull && `full in ~${waitedFor(w.minutesToFull * 60_000)}`, w.resetsAt && `resets ${clock(w.resetsAt)}`].filter(Boolean).join(' · ');
-    row.append(el('span', 'limit-name', `Codex ${windowName(w.windowMinutes)}`.trim()), el('span', 'limit-status', `${Math.round(w.usedPercent)}% used`));
+    const detail = [`${Math.round(w.usedPercent)}%`, w.minutesToFull && `full in ~${waitedFor(w.minutesToFull * 60_000)}`, w.resetsAt && `resets ${clock(w.resetsAt)}`].filter(Boolean).join(' · ');
+    row.append(el('span', 'limit-name', `Codex ${windowName(w.windowMinutes)}`.trim()), el('span', 'limit-status', detail));
     const meter = el('div', 'meter');
     const fill = el('b');
     fill.style.width = `${Math.min(100, w.usedPercent)}%`;
     meter.append(fill);
     rows.push(row, meter);
-    if (detail) rows.push(el('div', 'hits', detail));
     if (w.usedPercent >= 80 && tone !== 'limited') tone = 'high';
   }
   box.className = `limits ${tone}`;
@@ -184,11 +184,11 @@ function setView(v) {
   }
   for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === v));
   for (const name of ['waiting', 'today', 'wrapped', 'settings']) $(`view-${name}`).hidden = v !== name;
-  document.querySelector('.wrapped-only').hidden = v !== 'wrapped';
   $('gear').setAttribute('aria-pressed', String(v === 'settings'));
   $('refresh').hidden = v === 'settings';
   if (v === 'settings') {
     $('updated').textContent = '';
+    for (const id of ['hotkey-msg', 'notify-msg', 'polish-msg']) $(id).textContent = '';
     showSettings();
     return;
   }
@@ -206,7 +206,7 @@ function setView(v) {
   }
 }
 
-const hours = (h) => (h >= 10 ? Math.round(h).toString() : h.toFixed(1));
+const hours = (h) => (h >= 10 || h === 0 ? Math.round(h).toString() : h.toFixed(1));
 
 function ago(ts) {
   const m = Math.round((Date.now() - ts) / 60_000);
@@ -215,27 +215,37 @@ function ago(ts) {
   return `Updated ${Math.round(m / 60)} h ago`;
 }
 
+// One bar per day, oldest on the left. Days with no agent work get a faint
+// stub so the time axis stays readable.
 function spark(st) {
   const svg = $('spark');
   const n = st.window.days;
-  const vals = [];
+  const days = [];
   for (let i = 0; i < n; i++) {
     const d = new Date(st.window.until - (n - 1 - i) * 86_400_000);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    vals.push((st.minutesByDay[key] || 0) / 60);
+    days.push({ d, h: (st.minutesByDay[key] || 0) / 60 });
   }
-  const max = Math.max(1, ...vals);
+  const max = Math.max(0.5, ...days.map((x) => x.h));
   const bw = 300 / n;
-  svg.replaceChildren(...vals.map((v, i) => {
+  const gap = n > 14 ? 1.5 : 4;
+  svg.replaceChildren(...days.map(({ d, h }, i) => {
     const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    const h = v > 0 ? Math.max(1.5, (v / max) * 34) : 0;
-    r.setAttribute('x', (i * bw + 0.75).toFixed(1));
-    r.setAttribute('y', (36 - h).toFixed(1));
-    r.setAttribute('width', Math.max(0.5, bw - 1.5).toFixed(1));
-    r.setAttribute('height', h.toFixed(1));
-    r.setAttribute('rx', '1');
+    const bh = h > 0 ? Math.max(3, (h / max) * 38) : 2;
+    r.setAttribute('x', (i * bw + gap / 2).toFixed(1));
+    r.setAttribute('y', (40 - bh).toFixed(1));
+    r.setAttribute('width', Math.max(1, bw - gap).toFixed(1));
+    r.setAttribute('height', bh.toFixed(1));
+    r.setAttribute('rx', '1.5');
+    if (h === 0) r.setAttribute('class', 'zero');
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    t.textContent = `${d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}: ${hours(h)} agent-hours`;
+    r.append(t);
     return r;
   }));
+  const fmt = (d) => d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  $('axis-from').textContent = fmt(days[0].d);
+  $('axis-to').textContent = 'today';
 }
 
 function fillSelect(el, all, values, label, selected) {
@@ -287,7 +297,7 @@ function show({ stats: st, meta, at }) {
   }
   $('hours').textContent = hours(st.agentHours);
   $('waited').textContent = hours(st.waitHours);
-  $('limits').textContent = String(st.limitHits.length);
+  $('limit-hits').textContent = String(st.limitHits.length);
   $('parallel').textContent = String(st.peakParallel);
   // Cursor keeps no token counts locally: say so rather than show "0 tokens".
   const tokens = st.totalTokens ? `${fmtNum(st.totalTokens)} tokens` : 'tokens not recorded';
@@ -400,9 +410,10 @@ function renderToday() {
       return li;
     }),
   );
-  const w = r.waiting;
-  $('today-wait').hidden = !w.length;
-  $('today-wait').textContent = w.length ? `Waiting on you: ${w.map((x) => `${x.title} (${x.waited})`).join(', ')}` : '';
+  // Just the count and a way there; the Waiting tab has the details.
+  const w = r.waiting.length;
+  $('today-wait').hidden = !w;
+  $('today-wait').textContent = `${w} session${w === 1 ? '' : 's'} waiting on you  →`;
   $('polished').hidden = !polishedText;
   $('polished').textContent = polishedText || '';
   $('copy-recap').disabled = !r.projects.length;
@@ -411,6 +422,7 @@ function renderToday() {
   $('polish').title = prefs.recapWithClaude ? "Rewrites the recap with your own claude command" : 'Turn on "Polish recap with Claude" in Settings';
 }
 
+$('today-wait').addEventListener('click', () => setView('waiting'));
 $('copy-recap').addEventListener('click', async () => {
   const btn = $('copy-recap');
   try {
@@ -426,7 +438,7 @@ $('polish').addEventListener('click', async () => {
   if (!prefs.recapWithClaude) {
     lastView = 'today';
     setView('settings');
-    $('hotkey-msg').textContent = 'Turn on "Polish recap with Claude" below to use it.';
+    $('polish-msg').textContent = 'Turn this on to polish the recap.';
     return;
   }
   const btn = $('polish');
@@ -475,9 +487,9 @@ $('test-notify').addEventListener('click', async (e) => {
   e.preventDefault();
   try {
     await invoke('test_notification');
-    $('hotkey-msg').textContent = '';
+    $('notify-msg').textContent = '';
   } catch (err) {
-    $('hotkey-msg').textContent = `Could not notify: ${err}`;
+    $('notify-msg').textContent = `Could not notify: ${err}`;
   }
 });
 $('recap-claude').addEventListener('change', (e) => saveSettings({ recapWithClaude: e.target.checked }));

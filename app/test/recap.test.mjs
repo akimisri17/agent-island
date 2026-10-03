@@ -34,15 +34,48 @@ test('groups today by project, adds commits, names what is waiting', () => {
   assert.deepEqual(r.totals, { time: '1.8 h', projects: 2, agents: 2, commits: 2 });
   assert.deepEqual(r.waiting.map((w) => w.title), ['Migrate router', 'infra']);
   assert.equal(r.next.title, 'Migrate router');
-  assert.match(r.text, /^Today \(.+\): 1\.8 h of agent work across 2 projects, 2 commits\./);
-  assert.match(r.text, /- shop \(Claude Code, Cursor, 1\.5 h\): Fix checkout race; Add test\. 2 files, 2 commits\./);
-  assert.match(r.text, /Waiting on me: Migrate router \(mobile\); infra\./);
-  assert.match(r.text, /Next: pick up "Migrate router"\./);
+  // Done / In progress / Next: no agent names, minutes, file counts, or the
+  // private waiting queue in the pasted text.
+  assert.equal(r.text, [
+    'Done',
+    '- shop: Fix race in cart lock',
+    '- shop: Add test',
+    '',
+    'In progress',
+    '- shop: Fix checkout race; Add test',
+    '- api',
+    '',
+    'Next',
+    '- mobile: Migrate router',
+  ].join('\n'));
+  assert.doesNotMatch(r.text, /Claude Code|Cursor|min|files?\b|Waiting/);
 });
 
 test('a quiet day', () => {
   const r = buildRecap({ sessions: [], now: NOW });
   assert.equal(r.projects.length, 0);
   assert.equal(r.next, null);
-  assert.match(r.text, /0 min of agent work across 0 projects, 0 commits/);
+  assert.equal(r.text, 'No agent work today.');
+});
+
+test('idle sessions are not "waiting", and sub-minute projects are left out', () => {
+  const r = buildRecap({
+    now: NOW,
+    sessions: [
+      session({ project: 'real', turns: [{ start: 0, end: 5 * 60_000 }] }),
+      session({ project: 'blip', turns: [{ start: 0, end: 20_000 }] }),
+    ],
+    live: [
+      { state: 'idle', title: 'Stuck', since: NOW - 17 * H },
+      { state: 'waiting', title: 'Done', since: NOW - H },
+    ],
+  });
+  assert.deepEqual(r.projects.map((p) => p.project), ['real']);
+  assert.deepEqual(r.waiting.map((w) => w.title), ['Done']);
+});
+
+test('standup text: sections without content are left out', () => {
+  const H2 = 3_600_000;
+  const r = buildRecap({ now: NOW, sessions: [session({ project: 'site', title: 'site', turns: [{ start: 0, end: H2 }] })] });
+  assert.equal(r.text, 'In progress\n- site'); // no Done (no commits), no Next (nothing waiting); title equal to project dropped
 });
