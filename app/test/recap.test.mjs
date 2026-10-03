@@ -92,4 +92,8 @@ test('repo card: facts, and commands to copy only when they are safe', async () 
   // Never suggest a pull over uncommitted work.
   assert.deepEqual(repoCard({ ...base, behind: 1, changes: 3 }).commands, []);
   assert.equal(repoCard({ ...base, branch: 'abc1234', detached: true, upstream: null }).branch, 'detached at abc1234');
+  const g = repoCard({ ...base, gone: ['feat/squashed'] });
+  assert.deepEqual(g.facts, ['1 branch gone from remote']);
+  assert.equal(g.attention, true);
+  assert.deepEqual(g.commands, [{ label: 'Copy gone cleanup', cmd: "git -C '/w/my shop' branch -D feat/squashed" }]);
 });

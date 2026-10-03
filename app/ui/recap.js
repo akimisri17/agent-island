@@ -98,15 +98,20 @@ export function repoCard(r) {
   if (r.stashes) facts.push(plural(r.stashes, 'stash', 'stashes'));
   if (r.worktrees.length) facts.push(plural(r.worktrees.length, 'worktree'));
   if (r.merged.length) facts.push(`${plural(r.merged.length, 'merged branch', 'merged branches')} to delete`);
+  const gone = r.gone || [];
+  if (gone.length) facts.push(`${plural(gone.length, 'branch', 'branches')} gone from remote`);
   const git = `git -C ${quote(r.path)}`;
   const commands = [];
   if (r.behind && !r.changes) commands.push({ label: 'Copy pull', cmd: `${git} pull --ff-only` });
   if (r.merged.length) commands.push({ label: 'Copy cleanup', cmd: `${git} branch -d ${r.merged.map(quote).join(' ')}` });
+  // Squash and rebase merges leave these unmerged as far as git can tell, so
+  // deleting them needs -D: the command names each branch for a last look.
+  if (gone.length) commands.push({ label: 'Copy gone cleanup', cmd: `${git} branch -D ${gone.map(quote).join(' ')}` });
   return {
     name: r.project,
     branch: r.detached ? `detached at ${r.branch}` : r.branch,
     facts: facts.length ? facts : ['clean, up to date with last fetch'],
-    attention: !!(r.changes || r.ahead || r.behind || r.merged.length),
+    attention: !!(r.changes || r.ahead || r.behind || r.merged.length || gone.length),
     worktrees: r.worktrees.map((w) => w.branch || w.path),
     commands,
   };
