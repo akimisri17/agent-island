@@ -154,26 +154,40 @@ function dismissedCutoffs() {
     return new Set();
   }
 }
-function dismissCutoff(id) {
-  const d = dismissedCutoffs();
-  d.add(id);
-  // Keep only ids that could still show, so the list stays small.
-  const keep = [...d].filter((x) => x === id || cutoffs.some((c) => c.sessionId === x));
+function saveDismissed(ids) {
   try {
-    localStorage.setItem('dismissedCutoffs', JSON.stringify(keep));
+    localStorage.setItem('dismissedCutoffs', JSON.stringify(ids));
   } catch {
     // not remembered; hidden until the next read
   }
+}
+function dismissCutoff(id, index) {
+  const d = dismissedCutoffs();
+  d.delete(id);
+  d.add(id); // a Set keeps insertion order, so the newest ids are last
+  saveDismissed([...d].slice(-200));
   cutoffs = cutoffs.filter((c) => c.sessionId !== id);
   renderCutoff();
+  // Keep keyboard focus in the list: the next row's Resume, else the view.
+  const next = $('cutoff-list').querySelectorAll('.resume')[index];
+  (next || $('view-waiting').querySelector('button, [href], input, summary'))?.focus();
 }
 
+let cutoffSeq = 0;
 async function loadCutoff() {
+  const seq = ++cutoffSeq;
+  let list;
   try {
-    cutoffs = await invoke('cut_off');
+    list = await invoke('cut_off');
   } catch {
-    cutoffs = []; // a nice-to-have; Waiting still works
+    return; // a nice-to-have; keep what we had
   }
+  if (seq !== cutoffSeq) return;
+  cutoffs = list;
+  // Ids the backend no longer lists can never reappear, so forget them.
+  const d = dismissedCutoffs();
+  const keep = [...d].filter((x) => list.some((c) => c.sessionId === x));
+  if (keep.length !== d.size) saveDismissed(keep);
   renderCutoff();
 }
 
@@ -184,13 +198,14 @@ function renderCutoff() {
   if (!s) return;
   $('cutoff-head').textContent = s.heading;
   $('cutoff-list').replaceChildren(
-    ...s.rows.map((r) => {
+    ...s.rows.map((r, i) => {
       const li = el('li', 'dotted');
       const name = el('span', 'name');
       name.append(el('span', 'dot'), el('span', '', r.title));
       const resume = el('button', 'resume');
       resume.innerHTML = icon('play', 's');
       resume.append(el('span', '', 'Resume'));
+      resume.setAttribute('aria-label', `Resume ${r.title}`);
       resume.title = 'Jump to it if it is still open, otherwise resume it in a terminal';
       resume.addEventListener('click', async () => {
         resume.disabled = true;
@@ -207,7 +222,7 @@ function renderCutoff() {
       close.innerHTML = icon('close', 's');
       close.title = 'Hide this one';
       close.setAttribute('aria-label', `Hide ${r.title}`);
-      close.addEventListener('click', () => dismissCutoff(r.id));
+      close.addEventListener('click', () => dismissCutoff(r.id, i));
       li.append(name, resume, close, el('span', 'line', r.line));
       return li;
     }),
