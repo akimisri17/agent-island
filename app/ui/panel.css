@@ -1,14 +1,14 @@
 /* Tokens. Colour means state and appears only as small marks; text is ink or
    meta, never coloured. Light is the default; dark mirrors it. */
 :root {
-  --bg: #f7f7f8; --ink: #1c1c1e; --meta: #6e6e73; --line: #e5e5ea; --fill: #ececef;
+  --bg: #f7f7f8; --ink: #1c1c1e; --meta: #6e6e73; --line: #e5e5ea; --fill: #ececef; --quiet: #c7c7cc;
   --primary: #1c1c1e; --on-primary: #ffffff;
   --needs: #b08a45; --done: #6d9a82; --failed: #a95252;
   --r-control: 8px; --r-sheet: 12px;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #141414; --ink: #e6e6e6; --meta: #8e8e8e; --line: #212121; --fill: #262626;
+  :root { --bg: #141414; --ink: #e6e6e6; --meta: #8e8e8e; --line: #212121; --fill: #262626; --quiet: #4a4a4a;
     --primary: #e4e6ea; --on-primary: #141414;
     --needs: #d2ae6e; --done: #90bba4; --failed: #c46f6f; }
 }
@@ -16,7 +16,7 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
-  margin: 0; background: var(--bg); color: var(--ink); overflow: hidden;
+  margin: 0; background: var(--bg); color: var(--ink); overflow: hidden; position: relative;
   font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", sans-serif;
   display: flex; flex-direction: column;
   -webkit-user-select: none; user-select: none; cursor: default;
@@ -64,7 +64,7 @@ code, .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: 
 .rows .right.strong { color: var(--ink); font-weight: 600; font-size: 13px; }
 .rows .line { grid-column: 1 / -1; color: var(--meta); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rows .dotted .line { padding-left: 14px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--line); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--quiet); }
 .dot.needs { background: var(--needs); }
 .dot.done { background: var(--done); }
 .dot.failed { background: var(--failed); }
