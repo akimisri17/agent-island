@@ -77,7 +77,7 @@ The **Today** tab shows what agents did today, project by project:
 - today's git commits in those repos (your own commits, by your git email)
 - what's still waiting on you, and which session to pick up next
 
-**Copy for standup** puts it on your clipboard as plain text.
+**Copy for standup** puts a standup-ready version on your clipboard: **Done** (today's commit messages), **In progress** (session titles by project) and **Next** (the session that has waited longest). Agent names, minutes, file counts and your waiting list stay in the panel, not in what you paste.
 
 **Polish with Claude** is optional and off by default. Turn it on in Settings, and it rewrites the recap through *your own* installed `claude` command (`claude -p`), using your plan's usage. This sends today's session titles, project names and file names to Claude. It runs with no tools, without saving a session, and without your user plugins or hooks. It's the only thing in Agent Island that sends anything off your machine, and only when you click it.
 
