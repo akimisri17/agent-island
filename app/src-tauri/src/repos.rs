@@ -59,20 +59,39 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 /// Runs git for an action. Never prompts (no terminal to answer in); a
 /// failure returns git's first non-empty error line.
 fn git_run(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("Could not run git: {e}"))?;
+    let mut cmd = Command::new("git");
+    // A stalled connection gives up after 30 seconds instead of hanging.
+    cmd.arg("-C").arg(dir).args(["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30"]).args(args);
+    cmd.env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::null());
+    // Same for ssh: no password prompt (there is no terminal) and a connect
+    // timeout, unless the user already chose their own ssh command.
+    let own_ssh = std::env::var_os("GIT_SSH_COMMAND").is_some()
+        || git(dir, &["config", "core.sshCommand"]).is_some_and(|v| !v.trim().is_empty());
+    if !own_ssh {
+        cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=15");
+    }
+    let out = cmd.output().map_err(|e| format!("Could not run git: {e}"))?;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
     }
     let err = String::from_utf8_lossy(&out.stderr);
     let line = err.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("git failed");
-    Err(line.trim_start_matches("fatal: ").trim_start_matches("error: ").to_string())
+    Err(scrub(line.trim_start_matches("fatal: ").trim_start_matches("error: ")))
+}
+
+/// Removes credentials from URLs in a message: `://user:token@host` becomes
+/// `://host`.
+fn scrub(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(i) = rest.find("://") {
+        let (before, after) = rest.split_at(i + 3);
+        out.push_str(before);
+        let end = after.find(|c: char| c == '/' || c == '@' || c.is_whitespace()).unwrap_or(after.len());
+        rest = if after[end..].starts_with('@') { &after[end + 1..] } else { after };
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Actions only run on a repository's own top folder, as listed on the board.
@@ -89,6 +108,12 @@ fn check_root(path: &Path) -> Result<(), String> {
 pub fn pull(path: &Path) -> Result<u32, String> {
     check_root(path)?;
     let st = repo_status(path).ok_or("Could not read the repository.")?;
+    if st.detached {
+        return Err("Not on a branch.".into());
+    }
+    if st.upstream.is_none() {
+        return Err("This branch has no upstream to pull from.".into());
+    }
     if st.changes > 0 {
         return Err("Commit or stash your changes first.".into());
     }
@@ -96,7 +121,7 @@ pub fn pull(path: &Path) -> Result<u32, String> {
         return Err("Nothing to pull.".into());
     }
     let before = git_run(path, &["rev-parse", "HEAD"])?;
-    git_run(path, &["pull", "--ff-only", "--quiet"])?;
+    git_run(path, &["pull", "--ff-only", "--no-rebase", "--quiet"])?;
     let range = format!("{}..HEAD", before.trim());
     let n = git_run(path, &["rev-list", "--count", &range])?;
     Ok(n.trim().parse().unwrap_or(0))
@@ -119,7 +144,10 @@ pub fn delete_old_branches(path: &Path, names: &[String]) -> Result<Vec<String>,
             continue;
         };
         // `--` keeps a name from ever being read as an option.
-        git_run(path, &["branch", flag, "--", name])?;
+        if let Err(err) = git_run(path, &["branch", flag, "--", name]) {
+            let n = deleted.len();
+            return Err(if n > 0 { format!("{err} (deleted {n} before this)") } else { err });
+        }
         deleted.push(name.clone());
     }
     Ok(deleted)
@@ -246,6 +274,13 @@ pub fn parse_worktrees(s: &str) -> Vec<Worktree> {
 mod tests {
     use super::*;
 
+    /// Plain git for test setup, independent of the developer's git config.
+    fn tgit() -> Command {
+        let mut c = Command::new("git");
+        c.env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1");
+        c
+    }
+
     #[test]
     fn parses_status_headers_and_changes() {
         let r = parse_status(
@@ -279,7 +314,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let dir = dir.canonicalize().unwrap();
         let run = |args: &[&str]| {
-            let ok = Command::new("git").arg("-C").arg(&dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+            let ok = tgit().arg("-C").arg(&dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
             assert!(ok.success(), "git {args:?}");
         };
         run(&["init", "-q", "-b", "main"]);
@@ -296,7 +331,7 @@ mod tests {
         // after a squash or rebase merge.
         let remote = dir.with_extension("remote");
         let _ = std::fs::remove_dir_all(&remote);
-        let ok = Command::new("git").args(["init", "-q", "--bare"]).arg(&remote).status().unwrap();
+        let ok = tgit().args(["init", "-q", "--bare"]).arg(&remote).status().unwrap();
         assert!(ok.success());
         run(&["remote", "add", "origin", &remote.to_string_lossy()]);
         run(&["checkout", "-qb", "squashed"]);
@@ -334,7 +369,7 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         let base = base.canonicalize().unwrap();
         let sh = |dir: &Path, args: &[&str]| {
-            let ok = Command::new("git").arg("-C").arg(dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+            let ok = tgit().arg("-C").arg(dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
             assert!(ok.success(), "git {args:?}");
         };
         let remote = base.join("remote.git");
@@ -386,14 +421,30 @@ mod tests {
     fn pull_stops_when_a_merge_would_be_needed() {
         let (base, mine, _) = remote_and_clone("diverged");
         std::fs::write(mine.join("c.txt"), "mine").unwrap();
-        let ok = Command::new("git").arg("-C").arg(&mine).args(["add", "."]).status().unwrap().success()
-            && Command::new("git").arg("-C").arg(&mine).args(["commit", "-qm", "mine"]).status().unwrap().success();
+        let ok = tgit().arg("-C").arg(&mine).args(["add", "."]).status().unwrap().success()
+            && tgit().arg("-C").arg(&mine).args(["commit", "-qm", "mine"]).status().unwrap().success();
         assert!(ok);
         let err = pull(&mine).unwrap_err();
         assert!(!err.is_empty(), "git's reason is passed on");
         let r = repo_status(&mine).unwrap();
         assert_eq!((r.ahead, r.behind), (1, 2), "nothing was merged");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pull_refuses_without_an_upstream() {
+        let (base, mine, _) = remote_and_clone("noup");
+        let ok = tgit().arg("-C").arg(&mine).args(["checkout", "-qb", "local-only"]).status().unwrap().success();
+        assert!(ok);
+        assert_eq!(pull(&mine), Err("This branch has no upstream to pull from.".to_string()));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scrub_removes_credentials_from_urls() {
+        assert_eq!(scrub("unable to access 'https://user:ghp_x@github.com/a/b/'"), "unable to access 'https://github.com/a/b/'");
+        assert_eq!(scrub("plain line"), "plain line");
+        assert_eq!(scrub("see https://github.com/a/b and a@b"), "see https://github.com/a/b and a@b");
     }
 
     #[test]
@@ -408,7 +459,7 @@ mod tests {
     #[test]
     fn deletes_only_branches_still_listed_as_old() {
         let (base, mine, _) = remote_and_clone("delete");
-        let sh = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(&mine).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success(), "git {args:?}");
+        let sh = |args: &[&str]| assert!(tgit().arg("-C").arg(&mine).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success(), "git {args:?}");
         sh(&["branch", "done"]); // merged into main
         sh(&["checkout", "-qb", "squashed"]);
         std::fs::write(mine.join("s.txt"), "s").unwrap();
