@@ -3,7 +3,7 @@
 import { computeStats, filterSessions, filterOptions } from './lib/stats.mjs';
 import { renderHtml, fmtNum, AGENT_NAMES } from './lib/render.mjs';
 import { buildRecap } from './recap.js';
-import { repoRow, sortRepos } from './repos.js';
+import { repoRow, sortRepos, pullSheet, branchSheet, resultLine } from './repos.js';
 import { icon, sprite } from './icons.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -244,6 +244,37 @@ function closeMenu() {
   $('more').setAttribute('aria-expanded', 'false');
 }
 
+// One confirm sheet for every action that changes something. `run` does the
+// work; the sheet closes when it settles, and `run` reports its own result.
+let sheetRun = null;
+function openSheet({ title, body, ok, run }) {
+  closeMenu();
+  $('sheet-title').textContent = title;
+  $('sheet-body').replaceChildren(...body);
+  $('sheet-ok').textContent = ok;
+  $('sheet-ok').disabled = false;
+  sheetRun = run;
+  $('dim').hidden = $('sheet').hidden = false;
+  $('sheet-ok').focus();
+}
+function closeSheet() {
+  $('dim').hidden = $('sheet').hidden = true;
+  sheetRun = null;
+}
+$('sheet-cancel').addEventListener('click', closeSheet);
+$('dim').addEventListener('click', closeSheet);
+$('sheet-ok').addEventListener('click', async () => {
+  if (!sheetRun) return;
+  const run = sheetRun;
+  $('sheet-ok').disabled = true;
+  $('sheet-ok').textContent = 'Working…';
+  try {
+    await run();
+  } finally {
+    closeSheet();
+  }
+});
+
 $('more').addEventListener('click', (e) => {
   e.stopPropagation();
   $('menu').hidden ? openMenu() : closeMenu();
@@ -267,12 +298,13 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key === ',') return e.preventDefault(), setView('settings');
   if (mod && e.key === 'q') return e.preventDefault(), invoke('quit');
   if (e.key === 'Escape') {
+    if (!$('sheet').hidden) return closeSheet();
     if (!$('menu').hidden) return closeMenu();
     if (view === 'settings') return setView(lastView);
     return window.__TAURI__.window.getCurrentWindow().hide();
   }
   const n = Number(e.key);
-  if (!mod && !e.altKey && n >= 1 && n <= TABS.length && !isTyping(e.target)) setView(TABS[n - 1]);
+  if (!mod && !e.altKey && n >= 1 && n <= TABS.length && !isTyping(e.target) && $('sheet').hidden) setView(TABS[n - 1]);
 });
 
 // --- Wrapped ---
@@ -426,6 +458,9 @@ let repos = [];
 
 async function loadToday(force = false) {
   if (!force && recap && Date.now() - todayAt < 60_000) return renderToday(), renderRepos();
+  const keep = keepResults ? new Map(repoResults) : new Map();
+  keepResults = false;
+  repoResults.clear();
   try {
     const [scan] = await Promise.all([invoke('scan_today'), loadLive()]);
     const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
@@ -435,6 +470,7 @@ async function loadToday(force = false) {
       invoke('repo_status', { cwds }).catch(() => []),
     ]);
     repos = sortRepos(repoList.map(repoRow));
+    for (const [k, v] of keep) repoResults.set(k, v);
     recap = buildRecap({ sessions: scan.sessions, commits, live: lastLive });
     todayAt = Date.now();
     updatedAt.today = updatedAt.repos = todayAt;
@@ -478,19 +514,106 @@ function renderToday() {
   polish.title = prefs.recapWithClaude ? 'Rewrites the recap with your own claude command' : 'Turn on "Polish recap with Claude" in Settings';
 }
 
+let selectedRepo = null; // path of the row showing its actions
+const repoResults = new Map(); // path -> { text, ok }, until the next read
+let keepResults = false; // set by afterAction for exactly one re-read
+
 function renderRepos() {
   $('repos-empty').hidden = repos.length > 0;
   $('repos').replaceChildren(
     ...repos.map((r) => {
-      const li = el('li', 'dotted');
+      const li = el('li', r.path === selectedRepo ? 'dotted selected' : 'dotted');
+      li.tabIndex = 0;
+      const result = repoResults.get(r.path);
       const name = el('span', 'name');
-      name.append(el('span', `dot ${r.dot}`), el('span', '', r.name));
+      name.append(el('span', `dot ${result ? (result.ok ? 'done' : 'failed') : r.dot}`), el('span', '', r.name));
       const branch = el('span', 'right mono', r.branch);
       branch.title = r.path;
-      li.append(name, branch, el('span', 'line', r.status));
+      li.append(name, branch, el('span', 'line', result ? result.text : r.status));
+      if (r.path === selectedRepo) li.append(repoActions(r));
+      const toggle = () => {
+        selectedRepo = selectedRepo === r.path ? null : r.path;
+        renderRepos();
+      };
+      li.addEventListener('click', (e) => !e.target.closest('.row-actions') && toggle());
+      li.addEventListener('keydown', (e) => e.key === 'Enter' && e.target === li && toggle());
       return li;
     }),
   );
+}
+
+function actionButton(label, iconName, cls, onClick) {
+  const b = el('button', cls);
+  b.innerHTML = icon(iconName, 's');
+  b.append(el('span', '', label));
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function repoActions(r) {
+  const box = el('div', 'row-actions');
+  if (r.canPull) box.append(actionButton('Pull', 'down', 'btn', () => confirmPull(r)));
+  if (r.oldBranches.length) box.append(actionButton(`Delete ${r.oldBranches.length} old`, 'trash', 'btn', () => confirmDelete(r)));
+  box.append(actionButton('Terminal', 'term', 'btn ghost', () => openTerminal(r)));
+  return box;
+}
+
+async function afterAction(r, result) {
+  repoResults.set(r.path, result);
+  selectedRepo = null;
+  keepResults = true;
+  await loadToday(true);
+}
+
+function confirmPull(r) {
+  const s = pullSheet(r);
+  openSheet({
+    title: s.title,
+    body: [el('p', '', r.name), el('div', 'cmd', s.command), el('p', '', s.note)],
+    ok: s.ok,
+    run: async () => {
+      let res;
+      try {
+        res = resultLine('pull', await invoke('repo_pull', { path: r.path }));
+      } catch (e) {
+        res = resultLine('error', e);
+      }
+      await afterAction(r, res);
+    },
+  });
+}
+
+function confirmDelete(r) {
+  const s = branchSheet(r);
+  const list = el('ul');
+  for (const it of s.items) {
+    const li = el('li', '', it.name);
+    li.append(el('span', '', ` · ${it.why}`));
+    list.append(li);
+  }
+  openSheet({
+    title: s.title,
+    body: [el('p', '', s.note), ...(s.warning ? [el('p', 'warn', s.warning)] : []), list],
+    ok: s.ok,
+    run: async () => {
+      let res;
+      try {
+        res = resultLine('delete', await invoke('repo_delete_branches', { path: r.path, names: s.items.map((i) => i.name) }));
+      } catch (e) {
+        res = resultLine('error', e);
+      }
+      await afterAction(r, res);
+    },
+  });
+}
+
+async function openTerminal(r) {
+  try {
+    await invoke('open_terminal', { path: r.path });
+    window.__TAURI__.window.getCurrentWindow().hide();
+  } catch (e) {
+    note(String(e));
+  }
 }
 
 $('copy-recap').addEventListener('click', async () => {
@@ -525,10 +648,16 @@ $('polish').addEventListener('click', async () => {
 
 // --- Settings ---
 
-function showSettings() {
+async function showSettings() {
   $('hotkey').textContent = hotkeyLabel(prefs.hotkey);
   $('notify').checked = prefs.notifyLimits;
   $('recap-claude').checked = prefs.recapWithClaude;
+  const apps = await invoke('terminals').catch(() => []);
+  const sel = $('terminal');
+  sel.replaceChildren(...apps.map((a) => new Option(a, a)));
+  if (!apps.length) sel.replaceChildren(new Option('None found', ''));
+  sel.disabled = apps.length < 2;
+  sel.value = apps.includes(prefs.terminal) ? prefs.terminal : apps[0] || '';
 }
 
 async function saveSettings(next) {
@@ -555,6 +684,7 @@ $('test-notify').addEventListener('click', async (e) => {
   }
 });
 $('recap-claude').addEventListener('change', (e) => saveSettings({ recapWithClaude: e.target.checked }));
+$('terminal').addEventListener('change', (e) => saveSettings({ terminal: e.target.value || null }));
 
 // Click the key, then press a shortcut. Needs a modifier unless it is F1–F24.
 $('hotkey').addEventListener('click', () => {
