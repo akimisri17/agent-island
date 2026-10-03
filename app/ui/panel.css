@@ -171,3 +171,11 @@ code, .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: 
 .sheet li span { font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: var(--meta); }
 .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .pick { font: inherit; font-size: 12px; color: var(--ink); background: var(--fill); border: 0; border-radius: 7px; padding: 4px 6px; flex: none; }
+
+/* Cut off: sessions to pick back up. */
+#cutoff-list li { grid-template-columns: minmax(0, 1fr) auto auto; }
+#cutoff-list .line { grid-column: 1 / -1; }
+.resume { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: var(--fill); color: var(--ink); font-size: 11.5px; font-weight: 650; padding: 3px 9px; }
+.resume:disabled { opacity: .45; }
+.dismiss { border: 0; background: none; color: var(--meta); padding: 3px; display: flex; border-radius: 5px; }
+.dismiss:hover { color: var(--ink); background: var(--fill); }
