@@ -194,3 +194,27 @@ test('claude: SDK-driven prompts and continuation summaries are not a person typ
   const s = await parseClaudeFile(fx('claude-sdk.jsonl'), { since });
   assert.equal(s.prompts.length, 1); // only "real question"
 });
+
+test('claude: scheduled tasks are not a person typing, even when logged as human', async () => {
+  const s = await parseClaudeFile(fx('claude-scheduled.jsonl'), { since });
+  assert.equal(s.prompts.length, 0);
+  assert.equal(s.tokens.output, 5);
+});
+
+test('claude: a resumed or forked copy counts each line once', async () => {
+  const { scan } = await import('../src/scan.mjs');
+  const roots = { claude: fx('fork'), codex: fx('none'), cursor: null, gemini: null };
+  const { sessions } = await scan({ since, roots });
+  const [orig, copy] = sessions.sort((a, b) => a.start - b.start);
+  assert.equal(sessions.length, 2);
+  assert.equal(orig.prompts.length, 2);
+  assert.equal(orig.tokens.output, 30);
+  assert.equal(copy.prompts.length, 1);
+  assert.equal(copy.tokens.output, 40);
+  assert.equal(copy.start, Date.parse('2026-09-15T10:20:00.000Z'));
+  assert.equal(copy.turns.length, 1);
+  assert.deepEqual([...copy.filesEdited], []);
+  const one = await parseClaudeFile(fx('fork/zzz-copy.jsonl'), { since });
+  assert.equal(orig.prompts.length + copy.prompts.length, one.prompts.length);
+  assert.equal(orig.tokens.output + copy.tokens.output, one.tokens.output);
+});

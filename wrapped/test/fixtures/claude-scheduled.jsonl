@@ -1,0 +1,3 @@
+{"type":"user","uuid":"s1","origin":{"kind":"human"},"cwd":"/work/shop","message":{"role":"user","content":"<scheduled-task name=\"eod-digest\" file=\"/u/.claude/scheduled-tasks/eod-digest/SKILL.md\">\nThis is an automated run of a scheduled task."},"timestamp":"2026-09-15T18:00:00.000Z"}
+{"type":"assistant","uuid":"s2","message":{"id":"sm1","model":"claude-opus-5","content":[],"usage":{"input_tokens":1,"output_tokens":5}},"timestamp":"2026-09-15T18:00:30.000Z"}
+{"type":"user","uuid":"s3","origin":{"kind":"human"},"cwd":"/work/shop","message":{"role":"user","content":[{"type":"text","text":"<scheduled-task name=\"eod-digest\">run"}]},"timestamp":"2026-09-15T18:01:00.000Z"}

@@ -175,9 +175,10 @@ fn lines(path: &Path) -> impl Iterator<Item = String> {
 // ---------- Claude Code ----------
 
 const EDIT_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
-const NOT_HUMAN_PREFIXES: [&str; 5] = [
+const NOT_HUMAN_PREFIXES: [&str; 6] = [
     "<local-command",
     "<task-notification",
+    "<scheduled-task",
     "[SYSTEM",
     "<system-reminder",
     "This session is being continued from a previous conversation",
@@ -189,6 +190,7 @@ struct CLine<'a> {
     #[serde(rename = "type")]
     kind: Option<&'a str>,
     timestamp: Option<&'a str>,
+    uuid: Option<String>,
     cwd: Option<String>,
     custom_title: Option<String>,
     agent_name: Option<String>,
@@ -249,77 +251,142 @@ struct ToolInput {
 }
 
 pub fn parse_claude(path: &Path, since: i64, is_subagent: bool) -> Session {
-    let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let mut b = Builder::new("claude", id, path);
-    b.s.is_subagent = is_subagent;
-    let mut usage_by_id: HashMap<String, (Option<String>, Usage)> = HashMap::new();
-    let mut limit_keys = HashSet::new();
+    build_claude(read_claude(path, since, is_subagent), &mut Seen::default())
+}
 
+/// One counted line of a Claude log.
+struct CEvent {
+    uuid: Option<String>,
+    ts: i64,
+    kind: CKind,
+    compact: bool,
+    limit: Option<(String, f64)>,
+}
+
+enum CKind {
+    Prompt,
+    Activity,
+    Assistant { msg_id: Option<String>, model: Option<String>, usage: Option<Usage>, tools: Vec<(Option<String>, Option<String>)> },
+    Other,
+}
+
+/// A Claude log read into events. Resumed and forked sessions start a new
+/// file that copies earlier lines with the same uuid and message id, so the
+/// scan reads every file first and then builds sessions oldest first,
+/// skipping lines an earlier file already counted.
+pub(crate) struct ClaudeFile {
+    path: PathBuf,
+    is_subagent: bool,
+    title: Option<String>,
+    cwd: Option<String>,
+    first: Option<i64>,
+    born: i64,
+    events: Vec<CEvent>,
+}
+
+/// Line uuids and message ids already counted by earlier files.
+#[derive(Default)]
+pub(crate) struct Seen {
+    uuids: HashSet<String>,
+    messages: HashSet<String>,
+}
+
+pub(crate) fn read_claude(path: &Path, since: i64, is_subagent: bool) -> ClaudeFile {
+    let mut f = ClaudeFile { path: path.to_path_buf(), is_subagent, title: None, cwd: None, first: None, born: 0, events: Vec::new() };
     for line in lines(path) {
         let Ok(mut d) = serde_json::from_str::<CLine>(&line) else { continue };
         if d.kind == Some("custom-title") {
             if let Some(t) = d.custom_title.take().filter(|t| !t.is_empty()) {
-                b.s.title = Some(t);
+                f.title = Some(t);
             }
         }
-        if d.kind == Some("agent-name") && b.s.title.is_none() {
-            b.s.title = d.agent_name.take().filter(|t| !t.is_empty());
+        if d.kind == Some("agent-name") && f.title.is_none() {
+            f.title = d.agent_name.take().filter(|t| !t.is_empty());
         }
         let Some(ts) = d.timestamp.and_then(parse_ts) else { continue };
+        f.first = Some(f.first.map_or(ts, |v| v.min(ts)));
         if ts < since {
             continue;
         }
-        if b.s.project.is_none() {
-            b.s.project = d.cwd.as_deref().and_then(project_of);
-            b.s.cwd = d.cwd.clone();
+        if f.cwd.is_none() {
+            f.cwd = d.cwd.take();
         }
-        if let Some(q) = &d.quota_limits {
-            if q.status.as_deref() == Some("rejected") {
-                let kind = q.rate_limit_type.clone().unwrap_or_default();
-                let resets = q.resets_at.unwrap_or(0.0);
-                if limit_keys.insert(format!("{kind}:{resets}")) {
-                    b.s.limit_hits.push(LimitHit { ts, kind, resets_at: (resets * 1000.0) as i64 });
-                }
+        let limit = d
+            .quota_limits
+            .as_ref()
+            .filter(|q| q.status.as_deref() == Some("rejected"))
+            .map(|q| (q.rate_limit_type.clone().unwrap_or_default(), q.resets_at.unwrap_or(0.0)));
+        let compact = d.is_compact_summary == Some(true);
+        let kind = match d.kind {
+            Some("assistant") if d.message.is_some() => {
+                let m = d.message.take().unwrap();
+                let blocks: Vec<Block> = m.content.and_then(|c| serde_json::from_str(c.get()).ok()).unwrap_or_default();
+                let tools = blocks
+                    .into_iter()
+                    .filter(|c| c.kind.as_deref() == Some("tool_use"))
+                    .map(|c| (c.name, c.input.and_then(|i| i.file_path.or(i.notebook_path))))
+                    .collect();
+                CKind::Assistant { msg_id: m.id, model: m.model, usage: m.usage, tools }
+            }
+            Some("user") if !is_subagent && d.is_sidechain != Some(true) && is_human_prompt(&d) => CKind::Prompt,
+            Some("user") => CKind::Activity,
+            _ if compact || limit.is_some() => CKind::Other,
+            _ => continue,
+        };
+        f.events.push(CEvent { uuid: d.uuid.take(), ts, kind, compact, limit });
+    }
+    f
+}
+
+pub(crate) fn build_claude(f: ClaudeFile, seen: &mut Seen) -> Session {
+    let id = f.path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut b = Builder::new("claude", id, &f.path);
+    b.s.is_subagent = f.is_subagent;
+    b.s.title = f.title;
+    b.s.project = f.cwd.as_deref().and_then(project_of);
+    b.s.cwd = f.cwd;
+    let mut usage_by_id: HashMap<String, (Option<String>, Usage)> = HashMap::new();
+    let mut limit_keys = HashSet::new();
+
+    for e in f.events {
+        if let Some(u) = e.uuid {
+            if !seen.uuids.insert(u) {
+                continue;
             }
         }
-        if d.is_compact_summary == Some(true) {
+        if let Some((kind, resets)) = e.limit {
+            if limit_keys.insert(format!("{kind}:{resets}")) {
+                b.s.limit_hits.push(LimitHit { ts: e.ts, kind, resets_at: (resets * 1000.0) as i64 });
+            }
+        }
+        if e.compact {
             b.s.compactions += 1;
         }
-
-        match d.kind {
-            Some("assistant") => {
-                let Some(m) = d.message.take() else { continue };
-                b.activity(ts);
-                if let (Some(id), Some(u)) = (m.id, m.usage) {
-                    usage_by_id.insert(id, (m.model, u));
-                }
-                let blocks: Vec<Block> = m.content.and_then(|c| serde_json::from_str(c.get()).ok()).unwrap_or_default();
-                for c in blocks {
-                    if c.kind.as_deref() != Some("tool_use") {
-                        continue;
+        match e.kind {
+            CKind::Assistant { msg_id, model, usage, tools } => {
+                b.activity(e.ts);
+                if let (Some(id), Some(u)) = (msg_id, usage) {
+                    if !seen.messages.contains(&id) {
+                        usage_by_id.insert(id, (model, u));
                     }
-                    b.tool(c.name.as_deref());
-                    let file = c.input.and_then(|i| i.file_path.or(i.notebook_path));
-                    if let (Some(name), Some(f)) = (c.name.as_deref(), file) {
+                }
+                for (name, file) in tools {
+                    b.tool(name.as_deref());
+                    if let (Some(name), Some(f)) = (name.as_deref(), file) {
                         if EDIT_TOOLS.contains(&name) {
                             b.files.insert(f);
                         }
                     }
                 }
             }
-            Some("user") => {
-                let human = !is_subagent && d.is_sidechain != Some(true) && is_human_prompt(&d);
-                if human {
-                    b.prompt(ts)
-                } else {
-                    b.activity(ts)
-                }
-            }
-            _ => {}
+            CKind::Prompt => b.prompt(e.ts),
+            CKind::Activity => b.activity(e.ts),
+            CKind::Other => {}
         }
     }
 
-    for (model, u) in usage_by_id.into_values() {
+    for (id, (model, u)) in usage_by_id {
+        seen.messages.insert(id);
         let out = u.output_tokens.unwrap_or(0);
         b.s.tokens.input += u.input_tokens.unwrap_or(0);
         b.s.tokens.cache_read += u.cache_read_input_tokens.unwrap_or(0);
@@ -331,8 +398,23 @@ pub fn parse_claude(path: &Path, since: i64, is_subagent: bool) -> Session {
     b.finish()
 }
 
+/// Builds sessions from many read files, oldest first, so a resumed or
+/// forked copy never counts a line twice. Ties (a fork copies the first
+/// timestamp too) go to the file created first, then to the path.
+pub(crate) fn build_claude_all(mut files: Vec<ClaudeFile>) -> Vec<Session> {
+    files.retain(|f| f.first.is_some());
+    files.sort_by(|a, b| (a.first, a.born, &a.path).cmp(&(b.first, b.born, &b.path)));
+    let mut seen = Seen::default();
+    files.into_iter().map(|f| build_claude(f, &mut seen)).collect()
+}
+
 fn is_human_prompt(d: &CLine) -> bool {
     if d.tool_use_result.is_some() || d.is_meta == Some(true) {
+        return false;
+    }
+    let text = prompt_text(d);
+    // Scheduled tasks are logged as human but nobody typed them.
+    if text.as_deref().is_some_and(|t| t.trim_start().starts_with("<scheduled-task")) {
         return false;
     }
     if let Some(o) = &d.origin {
@@ -344,19 +426,25 @@ fn is_human_prompt(d: &CLine) -> bool {
         return false;
     }
     // Older logs have no origin field: fall back to the message shape.
-    let Some(raw) = d.message.as_ref().and_then(|m| m.content) else { return false };
-    let text = if raw.get().starts_with('"') {
-        serde_json::from_str::<String>(raw.get()).ok()
-    } else {
+    if let Some(raw) = d.message.as_ref().and_then(|m| m.content).filter(|r| !r.get().starts_with('"')) {
         let blocks: Vec<Block> = serde_json::from_str(raw.get()).unwrap_or_default();
         if blocks.iter().any(|c| c.kind.as_deref() == Some("tool_result")) {
             return false;
         }
-        blocks.into_iter().find(|c| c.kind.as_deref() == Some("text")).and_then(|c| c.text)
-    };
+    }
     match text {
         Some(t) => !NOT_HUMAN_PREFIXES.iter().any(|p| t.trim_start().starts_with(p)),
         None => false,
+    }
+}
+
+fn prompt_text(d: &CLine) -> Option<String> {
+    let raw = d.message.as_ref().and_then(|m| m.content)?;
+    if raw.get().starts_with('"') {
+        serde_json::from_str::<String>(raw.get()).ok()
+    } else {
+        let blocks: Vec<Block> = serde_json::from_str(raw.get()).unwrap_or_default();
+        blocks.into_iter().find(|c| c.kind.as_deref() == Some("text")).and_then(|c| c.text)
     }
 }
 
@@ -543,21 +631,22 @@ fn cursor_user_dir(home: &Path) -> PathBuf {
 }
 
 fn list_jsonl(dir: &Path, since: i64, out: &mut Vec<(PathBuf, u64)>) {
+    list_jsonl_born(dir, since, &mut |p, len, _| out.push((p, len)));
+}
+
+/// Like `list_jsonl`, also passing each file's creation time (ms).
+fn list_jsonl_born(dir: &Path, since: i64, out: &mut dyn FnMut(PathBuf, u64, i64)) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let p = e.path();
         let Ok(ft) = e.file_type() else { continue };
         if ft.is_dir() {
-            list_jsonl(&p, since, out);
+            list_jsonl_born(&p, since, out);
         } else if ft.is_file() && p.extension().is_some_and(|x| x == "jsonl") {
             let Ok(meta) = e.metadata() else { continue };
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_millis() as i64);
-            if mtime >= since {
-                out.push((p, meta.len()));
+            let ms = |t: std::io::Result<SystemTime>| t.ok().and_then(|m| m.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
+            if ms(meta.modified()) >= since {
+                out(p, meta.len(), ms(meta.created()));
             }
         }
     }
@@ -575,24 +664,34 @@ pub fn scan_since(roots: &Roots, since: i64) -> ScanResult {
     let t0 = Instant::now();
     let until = now_ms();
     let (mut claude, mut codex) = (Vec::new(), Vec::new());
-    list_jsonl(&roots.claude, since, &mut claude);
+    list_jsonl_born(&roots.claude, since, &mut |p, len, born| claude.push((p, len, born)));
     list_jsonl(&roots.codex, since, &mut codex);
     let mut agy = Vec::new();
     crate::antigravity::list(&roots.gemini, since, &mut agy);
     let cursor_size = std::fs::metadata(&roots.cursor).map_or(0, |m| m.len());
-    let bytes = claude.iter().chain(codex.iter()).chain(agy.iter()).map(|(_, n)| n).sum::<u64>() + cursor_size;
+    let bytes = claude.iter().map(|(_, n, _)| n).sum::<u64>()
+        + codex.iter().chain(agy.iter()).map(|(_, n)| n).sum::<u64>()
+        + cursor_size;
     let files = FileCounts { claude: claude.len(), codex: codex.len(), cursor: usize::from(cursor_size > 0), antigravity: agy.len() };
 
-    let mut sessions: Vec<Session> = claude
+    // Claude files are read in parallel and built together so resumed and
+    // forked copies are counted once.
+    let read: Vec<ClaudeFile> = claude
         .par_iter()
-        .map(|(p, _)| {
+        .map(|(p, _, born)| {
             let sub = p.components().any(|c| c.as_os_str() == "subagents");
-            parse_claude(p, since, sub)
+            ClaudeFile { born: *born, ..read_claude(p, since, sub) }
         })
-        .chain(codex.par_iter().map(|(p, _)| parse_codex(p, since)))
-        .chain(agy.par_iter().map(|(p, _)| crate::antigravity::parse(p, since)))
-        .filter(|s| s.start.is_some())
         .collect();
+    let mut sessions: Vec<Session> = build_claude_all(read);
+    sessions.retain(|s| s.start.is_some());
+    sessions.par_extend(
+        codex
+            .par_iter()
+            .map(|(p, _)| parse_codex(p, since))
+            .chain(agy.par_iter().map(|(p, _)| crate::antigravity::parse(p, since)))
+            .filter(|s| s.start.is_some()),
+    );
     if cursor_size > 0 {
         sessions.extend(crate::cursor::parse_cursor_db(&roots.cursor, since));
     }
@@ -632,6 +731,33 @@ mod tests {
     fn sdk_prompts_are_not_human() {
         let s = parse_claude(&fx("claude-sdk.jsonl"), SINCE, false);
         assert_eq!(s.prompts.len(), 1);
+    }
+
+    #[test]
+    fn scheduled_tasks_are_not_human() {
+        let s = parse_claude(&fx("claude-scheduled.jsonl"), SINCE, false);
+        assert_eq!(s.prompts.len(), 0);
+        assert_eq!(s.tokens.output, 5);
+    }
+
+    #[test]
+    fn forked_copy_counts_each_line_once() {
+        let dir = fx("fork");
+        let roots = Roots { claude: dir.clone(), codex: fx("none"), cursor: fx("none"), gemini: fx("none") };
+        let mut sessions = scan_since(&roots, SINCE).sessions;
+        sessions.sort_by_key(|s| s.start);
+        assert_eq!(sessions.len(), 2);
+        let (orig, copy) = (&sessions[0], &sessions[1]);
+        assert_eq!(orig.prompts.len(), 2);
+        assert_eq!(orig.tokens.output, 30);
+        assert_eq!(copy.prompts.len(), 1);
+        assert_eq!(copy.tokens.output, 40);
+        assert_eq!(copy.start, parse_ts("2026-09-15T10:20:00Z"));
+        assert_eq!(copy.turns.len(), 1);
+        assert!(copy.files_edited.is_empty());
+        let one = parse_claude(&dir.join("zzz-copy.jsonl"), SINCE, false);
+        assert_eq!(orig.prompts.len() + copy.prompts.len(), one.prompts.len());
+        assert_eq!(orig.tokens.output + copy.tokens.output, one.tokens.output);
     }
 
     #[test]
