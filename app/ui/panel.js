@@ -259,6 +259,7 @@ $('back').addEventListener('click', () => setView(lastView));
 for (const b of document.querySelectorAll('#tabbar button')) b.addEventListener('click', () => setView(b.dataset.view));
 
 let recordingHotkey = false;
+const isTyping = (t) => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement || t.isContentEditable;
 document.addEventListener('keydown', (e) => {
   if (recordingHotkey) return;
   const mod = IS_MAC ? e.metaKey : e.ctrlKey;
@@ -271,7 +272,7 @@ document.addEventListener('keydown', (e) => {
     return window.__TAURI__.window.getCurrentWindow().hide();
   }
   const n = Number(e.key);
-  if (!mod && !e.altKey && n >= 1 && n <= TABS.length && !(e.target instanceof HTMLInputElement)) setView(TABS[n - 1]);
+  if (!mod && !e.altKey && n >= 1 && n <= TABS.length && !isTyping(e.target)) setView(TABS[n - 1]);
 });
 
 // --- Wrapped ---
@@ -564,6 +565,7 @@ $('hotkey').addEventListener('click', () => {
   recordingHotkey = true;
   const onKey = async (e) => {
     e.preventDefault();
+    e.stopPropagation();
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return; // wait for the real key
     document.removeEventListener('keydown', onKey, true);
     btn.classList.remove('recording');
