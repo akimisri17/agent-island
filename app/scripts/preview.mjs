@@ -26,6 +26,12 @@ const handlers = {
   recap_commits: () => [], live: () => [], limits: () => ({}),
   get_settings: () => ({ hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false }),
   set_settings: ({ next }) => next, open_report: () => null, jump: () => null, quit: () => null,
+  repo_pull: () => 3,
+  repo_delete_branches: ({ names }) => names,
+  terminals: () => ['Ghostty', 'iTerm', 'Terminal'],
+  open_terminal: () => null,
+  test_notification: () => null,
+  polish_recap: () => 'Done\\n- preview: polished text',
 };
 window.__TAURI__ = {
   core: { invoke: async (cmd, args) => { if (!handlers[cmd]) throw new Error(cmd + ' is not stubbed'); return handlers[cmd](args || {}); } },
