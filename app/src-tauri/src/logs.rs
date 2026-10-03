@@ -224,7 +224,7 @@ pub(crate) struct CMsg<'a> {
     model: Option<String>,
     usage: Option<Usage>,
     #[serde(borrow)]
-    content: Option<&'a RawValue>,
+    pub(crate) content: Option<&'a RawValue>,
 }
 
 #[derive(Deserialize, Clone)]
