@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","origin":{"kind":"human"},"cwd":"/work/shop","message":{"role":"user","content":"first"},"timestamp":"2026-09-15T10:00:01.000Z"}
+{"type":"assistant","uuid":"a1","message":{"id":"m1","model":"claude-opus-5","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/work/shop/a.ts"}}],"usage":{"input_tokens":1,"output_tokens":10}},"timestamp":"2026-09-15T10:00:30.000Z"}
+{"type":"user","uuid":"u2","origin":{"kind":"human"},"cwd":"/work/shop","message":{"role":"user","content":"second"},"timestamp":"2026-09-15T10:05:00.000Z"}
+{"type":"assistant","uuid":"a2","message":{"id":"m2","model":"claude-opus-5","content":[],"usage":{"input_tokens":1,"output_tokens":20}},"timestamp":"2026-09-15T10:06:00.000Z"}
+{"type":"user","uuid":"u3","origin":{"kind":"human"},"cwd":"/work/shop","message":{"role":"user","content":"third, after resuming"},"timestamp":"2026-09-15T10:20:00.000Z"}
+{"type":"assistant","uuid":"a3","message":{"id":"m3","model":"claude-opus-5","content":[],"usage":{"input_tokens":1,"output_tokens":40}},"timestamp":"2026-09-15T10:21:00.000Z"}

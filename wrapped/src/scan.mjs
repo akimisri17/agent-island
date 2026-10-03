@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { parseClaudeFile } from './claude.mjs';
+import { readClaudeFile, buildClaudeSessions } from './claude.mjs';
 import { parseCodexFile } from './codex.mjs';
 import { parseCursorDb } from './cursor.mjs';
 import { listAntigravity, parseAntigravityDb } from './antigravity.mjs';
@@ -36,7 +36,7 @@ async function listJsonl(dir, since, out = []) {
     else if (e.isFile() && e.name.endsWith('.jsonl')) {
       try {
         const st = await stat(p);
-        if (st.mtimeMs >= since) out.push({ path: p, size: st.size });
+        if (st.mtimeMs >= since) out.push({ path: p, size: st.size, born: Math.floor(st.birthtimeMs) });
       } catch {
         // file vanished between readdir and stat
       }
@@ -81,7 +81,7 @@ export async function scan({ since, roots = defaultRoots(), onProgress = () => {
   const sessions = await pool(jobs, 8, async (job) => {
     let s = null;
     try {
-      if (job.agent === 'claude') s = await parseClaudeFile(job.path, { since, isSubagent: job.isSubagent });
+      if (job.agent === 'claude') s = { ...(await readClaudeFile(job.path, { since, isSubagent: job.isSubagent })), born: job.born };
       else if (job.agent === 'codex') s = await parseCodexFile(job.path, { since });
       else s = await parseAntigravityDb(job.path, { since });
     } catch {
@@ -92,12 +92,17 @@ export async function scan({ since, roots = defaultRoots(), onProgress = () => {
     return s;
   });
 
+  // Claude files are read first and built together so resumed and forked
+  // copies are counted once.
+  const claude = buildClaudeSessions(sessions.filter((s) => s?.events));
+  const others = sessions.filter((s) => s && !s.events);
+
   const cursor = cursorSize ? await parseCursorDb(roots.cursor, { since }) : [];
   doneBytes += cursorSize;
   onProgress(doneBytes, totalBytes);
 
   return {
-    sessions: [...sessions, ...cursor].filter((s) => s && s.start !== null),
+    sessions: [...claude, ...others, ...cursor].filter((s) => s && s.start !== null),
     files: { claude: claudeFiles.length, codex: codexFiles.length, cursor: cursorSize ? 1 : 0, antigravity: agyFiles.length },
     bytes: totalBytes,
   };
