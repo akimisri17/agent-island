@@ -6,6 +6,7 @@ pub mod live;
 pub mod logs;
 pub mod notify;
 pub mod recap;
+pub mod repos;
 pub mod settings;
 
 use tauri::{
@@ -117,6 +118,12 @@ async fn scan_today(app: AppHandle) -> Result<logs::ScanResult, String> {
 #[tauri::command]
 async fn recap_commits(cwds: Vec<String>, since: i64) -> Result<Vec<recap::RepoCommits>, String> {
     tauri::async_runtime::spawn_blocking(move || recap::commits_since(&cwds, since)).await.map_err(|e| e.to_string())
+}
+
+/// Local git state of the repositories behind these folders (Repo board).
+#[tauri::command]
+async fn repo_status(cwds: Vec<String>) -> Result<Vec<repos::RepoStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || repos::status(&cwds)).await.map_err(|e| e.to_string())
 }
 
 /// Rewrites the recap with the person's own `claude`, only when they allowed it.
@@ -255,7 +262,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, polish_recap])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, polish_recap])
         .setup(|app| {
             let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
             let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");

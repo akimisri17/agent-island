@@ -73,7 +73,12 @@ code { font: 11.5px ui-monospace, Menlo, monospace; }
 /* Today */
 .today-total { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .wait-link { border: 0; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 12px; text-align: left; padding: 6px 10px; border-radius: 8px; flex: none; }
-.today { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; flex: 1; min-height: 0; overflow-y: auto; }
+.today-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.today { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.repos-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 6px; }
+.repos .p-branch { color: var(--muted); font-weight: 500; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repos li.attention .p-line:first-of-type { color: var(--accent); }
+.repos .r-cmds { display: flex; gap: 8px; margin-top: 2px; }
 .today li { border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 7px 10px; }
 .today .p-head { display: flex; justify-content: space-between; gap: 8px; }
 .today .p-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
