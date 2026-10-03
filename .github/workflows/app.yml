@@ -57,6 +57,9 @@ jobs:
       - run: npm ci
         working-directory: app
       - uses: tauri-apps/tauri-action@v0
+        env:
+          # Lets the action create the draft release and upload installers.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: app
           args: ${{ matrix.args }}
