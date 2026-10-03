@@ -155,7 +155,6 @@ code, .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: 
 .row-actions .btn { padding: 3px 9px; font-size: 11.5px; }
 .row-actions .btn.ghost { background: none; color: var(--meta); padding: 3px 4px; }
 .row-actions .btn.ghost:hover { color: var(--ink); }
-.line.result { display: flex; align-items: center; gap: 6px; }
 
 /* Confirm sheet: slides up over the view; shows the exact command. */
 .dim { position: absolute; inset: 0; z-index: 20; background: rgba(0,0,0,.45); }
