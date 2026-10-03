@@ -91,9 +91,10 @@ pub fn find_claude(home: &Path) -> Option<PathBuf> {
     None
 }
 
-pub const POLISH_PROMPT: &str = "Rewrite the notes on stdin as a short standup update in the first person. \
-Keep every fact, add none, and do not mention tools or AI. Group by project. \
-Plain text with short bullet points, under 120 words. Output only the update.";
+pub const POLISH_PROMPT: &str = "Rewrite the standup notes on stdin in the first person. \
+Keep the Done, In progress and Next sections and every fact in them; add nothing. \
+Turn commit messages and session titles into short plain phrases, like \"Fixed the cart race\". \
+Do not mention tools, agents, AI or time spent. Plain text, under 100 words. Output only the update.";
 
 /// Runs `claude -p` on the recap text: no tools, not saved as a session,
 /// and only project settings (none, in an empty temporary folder), so user
