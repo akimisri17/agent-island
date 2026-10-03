@@ -31,6 +31,11 @@ const handlers = {
   repo_delete_branches: ({ names }) => names,
   terminals: () => ['Ghostty', 'iTerm', 'Terminal'],
   open_terminal: () => null,
+  cut_off: () => [
+    { sessionId: 'aaaa-1', title: 'Repo board', project: 'agent-island', cwd: '/tmp', kind: 'limit', limitType: 'five_hour', at: Date.now() - 95 * 60000, resetsAt: Date.now() - 4 * 60000 },
+    { sessionId: 'bbbb-2', title: null, project: 'erp-backend', cwd: '/tmp', kind: 'interrupted', limitType: null, at: Date.now() - 50 * 60000, resetsAt: null },
+  ],
+  resume_session: () => null,
   test_notification: () => null,
   polish_recap: () => 'Done\\n- preview: polished text',
 };

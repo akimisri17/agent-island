@@ -186,31 +186,31 @@ const NOT_HUMAN_PREFIXES: [&str; 6] = [
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CLine<'a> {
+pub(crate) struct CLine<'a> {
     #[serde(rename = "type")]
-    kind: Option<&'a str>,
-    timestamp: Option<&'a str>,
-    uuid: Option<String>,
-    cwd: Option<String>,
-    custom_title: Option<String>,
-    agent_name: Option<String>,
-    quota_limits: Option<Quota>,
+    pub(crate) kind: Option<&'a str>,
+    pub(crate) timestamp: Option<&'a str>,
+    pub(crate) uuid: Option<String>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) custom_title: Option<String>,
+    pub(crate) agent_name: Option<String>,
+    pub(crate) quota_limits: Option<Quota>,
     is_compact_summary: Option<bool>,
-    is_sidechain: Option<bool>,
+    pub(crate) is_sidechain: Option<bool>,
     is_meta: Option<bool>,
     tool_use_result: Option<serde::de::IgnoredAny>,
     origin: Option<Origin>,
-    entrypoint: Option<&'a str>,
+    pub(crate) entrypoint: Option<&'a str>,
     #[serde(borrow)]
-    message: Option<CMsg<'a>>,
+    pub(crate) message: Option<CMsg<'a>>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Quota {
-    status: Option<String>,
-    rate_limit_type: Option<String>,
-    resets_at: Option<f64>,
+pub(crate) struct Quota {
+    pub(crate) status: Option<String>,
+    pub(crate) rate_limit_type: Option<String>,
+    pub(crate) resets_at: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -219,12 +219,12 @@ struct Origin {
 }
 
 #[derive(Deserialize)]
-struct CMsg<'a> {
+pub(crate) struct CMsg<'a> {
     id: Option<String>,
-    model: Option<String>,
+    pub(crate) model: Option<String>,
     usage: Option<Usage>,
     #[serde(borrow)]
-    content: Option<&'a RawValue>,
+    pub(crate) content: Option<&'a RawValue>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -236,11 +236,11 @@ struct Usage {
 }
 
 #[derive(Deserialize)]
-struct Block {
+pub(crate) struct Block {
     #[serde(rename = "type")]
-    kind: Option<String>,
+    pub(crate) kind: Option<String>,
     name: Option<String>,
-    text: Option<String>,
+    pub(crate) text: Option<String>,
     input: Option<ToolInput>,
 }
 
@@ -408,7 +408,7 @@ pub(crate) fn build_claude_all(mut files: Vec<ClaudeFile>) -> Vec<Session> {
     files.into_iter().map(|f| build_claude(f, &mut seen)).collect()
 }
 
-fn is_human_prompt(d: &CLine) -> bool {
+pub(crate) fn is_human_prompt(d: &CLine) -> bool {
     if d.tool_use_result.is_some() || d.is_meta == Some(true) {
         return false;
     }

@@ -5,6 +5,7 @@ import { renderHtml, fmtNum, AGENT_NAMES } from './lib/render.mjs';
 import { buildRecap } from './recap.js';
 import { repoRow, sortRepos, pullSheet, branchSheet, resultLine } from './repos.js';
 import { icon, sprite } from './icons.js';
+import { cutoffSection } from './cutoff.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -134,13 +135,98 @@ async function loadLive() {
     ? `${plural(needs.length, 'session')} waiting · ${hotkeyLabel(prefs.hotkey)} jumps to the longest`
     : `${hotkeyLabel(prefs.hotkey)} jumps to the longest wait`;
   $('live').replaceChildren(...needs.map(liveRow));
-  $('live-empty').hidden = needs.length > 0;
+  $('live-empty').hidden = needs.length > 0 || !$('cutoff').hidden;
   // Idle and working sessions are folded away: they are not asking for you.
   for (const [name, list] of [['idle', idle], ['working', working]]) {
     $(name).replaceChildren(...list.map(liveRow));
     $(`${name}-count`).textContent = String(list.length);
     $(`${name}-group`).hidden = list.length === 0;
   }
+}
+
+// --- Cut off ---
+
+let cutoffs = [];
+function dismissedCutoffs() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('dismissedCutoffs') || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+function saveDismissed(ids) {
+  try {
+    localStorage.setItem('dismissedCutoffs', JSON.stringify(ids));
+  } catch {
+    // not remembered; hidden until the next read
+  }
+}
+function dismissCutoff(id, index) {
+  const d = dismissedCutoffs();
+  d.delete(id);
+  d.add(id); // a Set keeps insertion order, so the newest ids are last
+  saveDismissed([...d].slice(-200));
+  cutoffs = cutoffs.filter((c) => c.sessionId !== id);
+  renderCutoff();
+  // Keep keyboard focus in the list: the next row's Resume, else the view.
+  const next = $('cutoff-list').querySelectorAll('.resume')[index];
+  (next || $('view-waiting').querySelector('button, [href], input, summary'))?.focus();
+}
+
+let cutoffSeq = 0;
+async function loadCutoff() {
+  const seq = ++cutoffSeq;
+  let list;
+  try {
+    list = await invoke('cut_off');
+  } catch {
+    return; // a nice-to-have; keep what we had
+  }
+  if (seq !== cutoffSeq) return;
+  cutoffs = list;
+  // Ids the backend no longer lists can never reappear, so forget them.
+  const d = dismissedCutoffs();
+  const keep = [...d].filter((x) => list.some((c) => c.sessionId === x));
+  if (keep.length !== d.size) saveDismissed(keep);
+  renderCutoff();
+}
+
+function renderCutoff() {
+  const s = cutoffSection(cutoffs, { now: Date.now(), dismissed: dismissedCutoffs() });
+  $('cutoff').hidden = !s;
+  $('live-empty').hidden = $('live').children.length > 0 || !!s;
+  if (!s) return;
+  $('cutoff-head').textContent = s.heading;
+  $('cutoff-list').replaceChildren(
+    ...s.rows.map((r, i) => {
+      const li = el('li', 'dotted');
+      const name = el('span', 'name');
+      name.append(el('span', 'dot'), el('span', '', r.title));
+      const resume = el('button', 'resume');
+      resume.innerHTML = icon('play', 's');
+      resume.append(el('span', '', 'Resume'));
+      resume.setAttribute('aria-label', `Resume ${r.title}`);
+      resume.title = 'Jump to it if it is still open, otherwise resume it in a terminal';
+      resume.addEventListener('click', async () => {
+        resume.disabled = true;
+        try {
+          await invoke('resume_session', { sessionId: r.id });
+          window.__TAURI__.window.getCurrentWindow().hide();
+        } catch (e) {
+          note(String(e));
+        } finally {
+          resume.disabled = false;
+        }
+      });
+      const close = el('button', 'dismiss');
+      close.innerHTML = icon('close', 's');
+      close.title = 'Hide this one';
+      close.setAttribute('aria-label', `Hide ${r.title}`);
+      close.addEventListener('click', () => dismissCutoff(r.id, i));
+      li.append(name, resume, close, el('span', 'line', r.line));
+      return li;
+    }),
+  );
 }
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -221,13 +307,13 @@ function setView(v) {
     for (const id of ['hotkey-msg', 'notify-msg', 'polish-msg']) $(id).textContent = '';
     return showSettings();
   }
-  if (v === 'waiting') return loadLive(), loadLimits();
+  if (v === 'waiting') return loadLive(), loadLimits(), loadCutoff();
   if (v === 'today' || v === 'repos') return loadToday();
   return load();
 }
 
 function refresh() {
-  if (view === 'waiting') return loadLive(), loadLimits(true);
+  if (view === 'waiting') return loadLive(), loadLimits(true), loadCutoff();
   if (view === 'today' || view === 'repos') return loadToday(true);
   if (view === 'wrapped') return load(true);
 }
@@ -728,7 +814,7 @@ $('hotkey').addEventListener('click', () => {
 
 listen('panel-shown', () => {
   loadLive(); // cheap: keeps the Waiting dot current on every tab
-  if (view === 'waiting') loadLimits();
+  if (view === 'waiting') loadLimits(), loadCutoff();
   if (view === 'wrapped') load();
   if (view === 'today' || view === 'repos') loadToday();
 });
