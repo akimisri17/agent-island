@@ -2,12 +2,16 @@
 // (synced into ./lib by scripts/sync-lib.mjs) turns them into numbers.
 import { computeStats, filterSessions, filterOptions } from './lib/stats.mjs';
 import { renderHtml, fmtNum, AGENT_NAMES } from './lib/render.mjs';
-import { buildRecap, repoCard } from './recap.js';
+import { buildRecap } from './recap.js';
+import { repoRow, sortRepos } from './repos.js';
+import { icon, sprite } from './icons.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const STALE_MS = 5 * 60_000; // re-read logs when the panel opens after this long
+const TABS = ['waiting', 'today', 'repos', 'wrapped'];
+const TITLES = { waiting: 'Waiting', today: 'Today', repos: 'Repos', wrapped: 'Wrapped', settings: 'Settings' };
 const $ = (id) => document.getElementById(id);
 const cache = new Map(); // days -> { scan, at }: raw sessions, so filters need no re-read
 let days = 7;
@@ -15,8 +19,16 @@ let busy = false;
 const filter = { agent: null, maker: null };
 let current = null; // { stats, meta } as shown, for the full report
 let view = 'waiting';
+let lastView = 'waiting';
+const updatedAt = {}; // view -> ms of its last successful load
 let prefs = { hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false };
 const IS_MAC = /Mac/.test(navigator.platform);
+
+// Icons: one sprite, then fill every placeholder.
+document.body.insertAdjacentHTML('afterbegin', sprite());
+for (const ph of document.querySelectorAll('[data-icon]')) ph.outerHTML = icon(ph.dataset.icon, ph.dataset.size || '');
+$('more').innerHTML = icon('more');
+$('back').innerHTML = icon('back');
 
 // "ctrl+alt+KeyJ" -> "⌃⌥J" on macOS, "Ctrl+Alt+J" elsewhere.
 function hotkeyLabel(acc) {
@@ -27,22 +39,46 @@ function hotkeyLabel(acc) {
   const mods = parts.map((m) => (IS_MAC ? mac : win)[m.toLowerCase()] || m);
   return IS_MAC ? mods.join('') + key : [...mods, key].join('+');
 }
-const hotkeyHint = () => `${hotkeyLabel(prefs.hotkey)} jumps to the longest wait`;
 
 try {
   Object.assign(filter, JSON.parse(localStorage.getItem('filter') || '{}'));
-  view = ['today', 'wrapped'].includes(localStorage.getItem('view')) ? localStorage.getItem('view') : 'waiting';
+  const saved = localStorage.getItem('view');
+  view = TABS.includes(saved) ? saved : 'waiting';
 } catch {
   // storage unavailable: start unfiltered, on Waiting
 }
 
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+// One line at the bottom for errors; empty and hidden otherwise.
+function note(text = '') {
+  $('note').textContent = text;
+  $('note').hidden = !text;
+}
+
+function ago(ts) {
+  if (!ts) return '';
+  const m = Math.round((Date.now() - ts) / 60_000);
+  if (m < 1) return 'Updated just now';
+  if (m < 60) return `Updated ${m} min ago`;
+  return `Updated ${Math.round(m / 60)} h ago`;
+}
+
+// --- Waiting ---
+
 const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', antigravity: 'Antigravity' };
 // From the log alone, a pending approval and a long-running tool look the
 // same; after 30 minutes the backend calls it idle (stopped mid-tool).
-const STATE_LABEL = { waiting: 'Finished', approval: 'Approval or long tool', idle: 'Stopped mid-tool', working: 'Working' };
+const STATE_LABEL = { waiting: 'Done', approval: 'Approve', idle: 'Stopped', working: 'Working' };
 const HOST_LABEL = { Claude: 'Claude app', 'Visual Studio Code': 'VS Code', iTerm: 'iTerm', iTerm2: 'iTerm', WindowsTerminal: 'Terminal' };
 
-// Compact ages for the list: "now", "47m", "17h", "2d".
+// Compact ages: "now", "47m", "17h", "2d".
 function waitedFor(ms) {
   const m = Math.floor(ms / 60_000);
   if (m < 1) return 'now';
@@ -53,24 +89,16 @@ function waitedFor(ms) {
 }
 
 function liveRow(s) {
-  const li = document.createElement('li');
-  li.className = s.state;
-  const dot = document.createElement('span');
-  dot.className = 'dot';
-  const title = document.createElement('span');
-  title.className = 'title';
-  title.textContent = s.title || s.project || 'Untitled session';
-  const age = document.createElement('span');
-  age.className = 'age';
-  age.textContent = s.state === 'working' ? '' : waitedFor(Date.now() - s.since);
-  age.title = s.state === 'working' ? '' : `Since ${new Date(s.since).toLocaleString()}`;
-  const sub = document.createElement('span');
-  sub.className = 'sub';
+  const li = el('li', 'dotted');
+  const name = el('span', 'name');
+  const needs = s.state === 'waiting' || s.state === 'approval';
+  name.append(el('span', needs ? 'dot needs' : 'dot'), el('span', '', s.title || s.project || 'Untitled session'));
+  const right = el('span', 'right num', s.state === 'working' ? STATE_LABEL.working : `${STATE_LABEL[s.state]} · ${waitedFor(Date.now() - s.since)}`);
+  right.title = s.state === 'working' ? '' : `Since ${new Date(s.since).toLocaleString()}`;
   const where = (s.host && (HOST_LABEL[s.host] || s.host)) || AGENT_LABEL[s.agent] || s.agent;
-  const state = s.unread ? `${STATE_LABEL[s.state]}, unread` : STATE_LABEL[s.state];
-  sub.textContent = [state, where, s.title && s.project].filter(Boolean).join(' · ');
-  li.append(dot, title, age, sub);
-  if (s.state === 'waiting' || s.state === 'approval') {
+  const line = el('span', 'line', [s.title && s.project, where, s.unread && 'unread'].filter(Boolean).join(' · '));
+  li.append(name, right, line);
+  if (needs) {
     li.tabIndex = 0;
     li.title = `Open in ${s.host || 'its app'}`;
     const go = async () => {
@@ -78,7 +106,7 @@ function liveRow(s) {
         await invoke('jump', { sessionId: s.sessionId });
         window.__TAURI__.window.getCurrentWindow().hide();
       } catch (e) {
-        $('updated').textContent = String(e);
+        note(String(e));
       }
     };
     li.addEventListener('click', go);
@@ -93,14 +121,18 @@ async function loadLive() {
   try {
     sessions = await invoke('live');
   } catch (e) {
-    if (view === 'waiting') $('updated').textContent = `Could not list sessions: ${e}`;
+    if (view === 'waiting') note(`Could not list sessions: ${e}`);
     return;
   }
   lastLive = sessions;
+  updatedAt.waiting = Date.now();
   const needs = sessions.filter((s) => s.state === 'waiting' || s.state === 'approval');
   const idle = sessions.filter((s) => s.state === 'idle');
   const working = sessions.filter((s) => s.state === 'working');
-  $('wcount').textContent = needs.length ? String(needs.length) : '';
+  $('wdot').hidden = needs.length === 0;
+  $('waiting-sub').textContent = needs.length
+    ? `${plural(needs.length, 'session')} waiting · ${hotkeyLabel(prefs.hotkey)} jumps to the longest`
+    : `${hotkeyLabel(prefs.hotkey)} jumps to the longest wait`;
   $('live').replaceChildren(...needs.map(liveRow));
   $('live-empty').hidden = needs.length > 0;
   // Idle and working sessions are folded away: they are not asking for you.
@@ -109,16 +141,9 @@ async function loadLive() {
     $(`${name}-count`).textContent = String(list.length);
     $(`${name}-group`).hidden = list.length === 0;
   }
-  if (view === 'waiting') $('updated').textContent = hotkeyHint();
 }
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-const el = (tag, cls, text) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-};
 const windowName = (m) => (m === 300 ? '5-hour' : m === 10080 ? 'weekly' : m ? `${Math.round(m / 60)}-hour` : '');
 
 let limitsAt = 0;
@@ -142,7 +167,7 @@ async function loadLimits(force = false) {
       : c.windowResets ? `resets about ${clock(c.windowResets)}`
       : 'no usage in 5 hours';
     const row = el('div', 'limit-row');
-    row.append(el('span', 'limit-name', 'Claude 5-hour'), el('span', 'limit-status', status));
+    row.append(el('span', 'limit-name', 'Claude · 5-hour limit'), el('span', 'limit-status', status));
     rows.push(row);
     // The dots only matter once this window has passed some earlier hit.
     if (c.pastHits > 0 && c.passed > 0 && c.risk !== 'limited') {
@@ -160,7 +185,7 @@ async function loadLimits(force = false) {
   for (const w of l.codex || []) {
     const row = el('div', 'limit-row');
     const detail = [`${Math.round(w.usedPercent)}%`, w.minutesToFull && `full in ~${waitedFor(w.minutesToFull * 60_000)}`, w.resetsAt && `resets ${clock(w.resetsAt)}`].filter(Boolean).join(' · ');
-    row.append(el('span', 'limit-name', `Codex ${windowName(w.windowMinutes)}`.trim()), el('span', 'limit-status', detail));
+    row.append(el('span', 'limit-name', `Codex · ${windowName(w.windowMinutes)}`.trim()), el('span', 'limit-status', detail));
     const meter = el('div', 'meter');
     const fill = el('b');
     fill.style.width = `${Math.min(100, w.usedPercent)}%`;
@@ -173,47 +198,85 @@ async function loadLimits(force = false) {
   box.hidden = rows.length === 0;
 }
 
+// --- Navigation ---
+
 function setView(v) {
+  closeMenu();
+  note();
   view = v;
   if (v !== 'settings') {
+    lastView = v;
     try {
       localStorage.setItem('view', v);
     } catch {
       // not remembered across launches
     }
   }
-  for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === v));
-  for (const name of ['waiting', 'today', 'wrapped', 'settings']) $(`view-${name}`).hidden = v !== name;
-  $('gear').setAttribute('aria-pressed', String(v === 'settings'));
-  $('refresh').hidden = v === 'settings';
+  for (const b of document.querySelectorAll('#tabbar button')) b.setAttribute('aria-selected', String(b.dataset.view === v));
+  for (const name of [...TABS, 'settings']) $(`view-${name}`).hidden = v !== name;
+  $('title').textContent = TITLES[v];
+  $('back').hidden = v !== 'settings';
+  $('more').hidden = v === 'settings';
   if (v === 'settings') {
-    $('updated').textContent = '';
     for (const id of ['hotkey-msg', 'notify-msg', 'polish-msg']) $(id).textContent = '';
-    showSettings();
-    return;
+    return showSettings();
   }
-  if (v === 'today') {
-    $('updated').textContent = '';
-    loadToday();
-    return;
-  }
-  if (v === 'waiting') {
-    $('updated').textContent = hotkeyHint();
-    loadLive();
-    loadLimits();
-  } else {
-    load();
-  }
+  if (v === 'waiting') return loadLive(), loadLimits();
+  if (v === 'today' || v === 'repos') return loadToday();
+  return load();
 }
+
+function refresh() {
+  if (view === 'waiting') return loadLive(), loadLimits(true);
+  if (view === 'today' || view === 'repos') return loadToday(true);
+  if (view === 'wrapped') return load(true);
+}
+
+function openMenu() {
+  $('m-updated').textContent = ago(updatedAt[view]);
+  $('m-updated').hidden = !updatedAt[view];
+  $('menu').hidden = false;
+  $('more').setAttribute('aria-expanded', 'true');
+  $('m-refresh').focus();
+}
+function closeMenu() {
+  $('menu').hidden = true;
+  $('more').setAttribute('aria-expanded', 'false');
+}
+
+$('more').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('menu').hidden ? openMenu() : closeMenu();
+});
+document.addEventListener('click', (e) => {
+  if (!$('menu').hidden && !$('menu').contains(e.target)) closeMenu();
+});
+$('m-refresh').addEventListener('click', () => (closeMenu(), refresh()));
+$('m-settings').addEventListener('click', () => setView('settings'));
+$('m-report').addEventListener('click', () => (closeMenu(), openReport()));
+$('m-quit').addEventListener('click', () => invoke('quit'));
+$('back').addEventListener('click', () => setView(lastView));
+for (const b of document.querySelectorAll('#tabbar button')) b.addEventListener('click', () => setView(b.dataset.view));
+
+let recordingHotkey = false;
+document.addEventListener('keydown', (e) => {
+  if (recordingHotkey) return;
+  const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+  if (mod && e.key === 'r') return e.preventDefault(), refresh();
+  if (mod && e.key === ',') return e.preventDefault(), setView('settings');
+  if (mod && e.key === 'q') return e.preventDefault(), invoke('quit');
+  if (e.key === 'Escape') {
+    if (!$('menu').hidden) return closeMenu();
+    if (view === 'settings') return setView(lastView);
+    return window.__TAURI__.window.getCurrentWindow().hide();
+  }
+  const n = Number(e.key);
+  if (!mod && !e.altKey && n >= 1 && n <= TABS.length && !(e.target instanceof HTMLInputElement)) setView(TABS[n - 1]);
+});
+
+// --- Wrapped ---
 
 const hours = (h) => (h >= 10 || h === 0 ? Math.round(h).toString() : h.toFixed(1));
-
-function ago(ts) {
-  const m = Math.round((Date.now() - ts) / 60_000);
-  if (m < 1) return 'Updated just now';
-  if (m < 60) return `Updated ${m} min ago`;
-  return `Updated ${Math.round(m / 60)} h ago`;
-}
 
 // One bar per day, oldest on the left. Days with no agent work get a faint
 // stub so the time axis stays readable.
@@ -231,9 +294,9 @@ function spark(st) {
   const gap = n > 14 ? 1.5 : 4;
   svg.replaceChildren(...days.map(({ d, h }, i) => {
     const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    const bh = h > 0 ? Math.max(3, (h / max) * 38) : 2;
+    const bh = h > 0 ? Math.max(3, (h / max) * 34) : 2;
     r.setAttribute('x', (i * bw + gap / 2).toFixed(1));
-    r.setAttribute('y', (40 - bh).toFixed(1));
+    r.setAttribute('y', (36 - bh).toFixed(1));
     r.setAttribute('width', Math.max(1, bw - gap).toFixed(1));
     r.setAttribute('height', bh.toFixed(1));
     r.setAttribute('rx', '1.5');
@@ -248,17 +311,17 @@ function spark(st) {
   $('axis-to').textContent = 'today';
 }
 
-function fillSelect(el, all, values, label, selected) {
-  el.replaceChildren(new Option(all, ''), ...values.map((v) => new Option(label(v), v)));
-  el.value = values.includes(selected) ? selected : '';
-  el.disabled = values.length < 2 && !selected;
+function fillSelect(sel, all, values, label, selected) {
+  sel.replaceChildren(new Option(all, ''), ...values.map((v) => new Option(label(v), v)));
+  sel.value = values.includes(selected) ? selected : '';
+  sel.disabled = values.length < 2 && !selected;
 }
 
 // Applies the agent and maker filters to the cached scan and redraws.
 function render() {
   const hit = cache.get(days);
   if (!hit) return;
-  const { scan, at } = hit;
+  const { scan } = hit;
   const agents = filterOptions(scan.sessions).agents;
   if (filter.agent && !agents.includes(filter.agent)) filter.agent = null;
   const byAgent = filterSessions(scan.sessions, { agent: filter.agent });
@@ -270,10 +333,10 @@ function render() {
   const stats = computeStats(filterSessions(byAgent, { maker: filter.maker }), { since: scan.since, until: scan.until });
   const meta = { files: scan.files, bytes: scan.bytes, seconds: scan.seconds, filter: { ...filter } };
   current = { stats, meta };
-  show({ stats, meta, at });
+  show({ stats, meta });
 }
 
-function show({ stats: st, meta, at }) {
+function show({ stats: st, meta }) {
   if (Object.values(meta.files).every((n) => !n)) {
     $('persona').textContent = 'No agent logs yet';
     $('line').textContent = `Nothing from Claude Code, Codex, Cursor, or Antigravity in the last ${days} days.`;
@@ -288,10 +351,9 @@ function show({ stats: st, meta, at }) {
     $('persona').textContent = st.persona.name;
     $('line').textContent = st.persona.line;
     $('badges').replaceChildren(...(st.persona.badges || []).map((b) => {
-      const el = document.createElement('span');
-      el.textContent = b.name.replace(/^The /, '');
-      el.title = b.line;
-      return el;
+      const s = el('span', '', b.name.replace(/^The /, ''));
+      s.title = b.line;
+      return s;
     }));
     $('report').disabled = false;
   }
@@ -302,39 +364,34 @@ function show({ stats: st, meta, at }) {
   // Cursor keeps no token counts locally: say so rather than show "0 tokens".
   const tokens = st.totalTokens ? `${fmtNum(st.totalTokens)} tokens` : 'tokens not recorded';
   $('meta').textContent = `${fmtNum(st.sessions)} sessions · ${fmtNum(st.filesEdited)} files · ${tokens}`;
-  if (view === 'wrapped') $('updated').textContent = ago(at);
   spark(st);
 }
 
 async function load(force = false) {
   const hit = cache.get(days);
-  if (hit && !force && Date.now() - hit.at < STALE_MS) {
-    render();
-    $('updated').textContent = ago(hit.at);
-    return;
-  }
+  if (hit && !force && Date.now() - hit.at < STALE_MS) return render();
   if (hit) render();
   if (busy) return;
   busy = true;
-  if (view === 'wrapped') $('updated').textContent = 'Reading logs…';
   try {
     const scan = await invoke('scan', { days });
     cache.set(days, { scan, at: Date.now() });
+    updatedAt.wrapped = Date.now();
     render();
   } catch (e) {
-    $('updated').textContent = `Could not read logs: ${e}`;
-    $('updated').classList.add('error');
+    note(`Could not read logs: ${e}`);
   } finally {
     busy = false;
   }
 }
 
 async function openReport() {
+  if (!current) await load(true);
   if (!current) return;
   try {
     await invoke('open_report', { html: renderHtml(current.stats, current.meta) });
   } catch (e) {
-    $('updated').textContent = `Could not open report: ${e}`;
+    note(`Could not open report: ${e}`);
   }
 }
 
@@ -358,18 +415,8 @@ for (const key of ['agent', 'maker']) {
   });
 }
 $('report').addEventListener('click', openReport);
-$('refresh').addEventListener('click', () => {
-  if (view === 'waiting') return loadLive(), loadLimits(true);
-  if (view === 'today') return loadToday(true);
-  return load(true);
-});
-for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => setView(b.dataset.view));
-$('quit').addEventListener('click', () => invoke('quit'));
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') window.__TAURI__.window.getCurrentWindow().hide();
-});
 
-// --- Today ---
+// --- Today and Repos (one read of today's logs feeds both) ---
 
 let recap = null;
 let polishedText = null;
@@ -377,8 +424,7 @@ let todayAt = 0;
 let repos = [];
 
 async function loadToday(force = false) {
-  if (!force && recap && Date.now() - todayAt < 60_000) return renderToday();
-  $('today-total').textContent = recap ? $('today-total').textContent : "Reading today's logs…";
+  if (!force && recap && Date.now() - todayAt < 60_000) return renderToday(), renderRepos();
   try {
     const [scan] = await Promise.all([invoke('scan_today'), loadLive()]);
     const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
@@ -387,111 +433,97 @@ async function loadToday(force = false) {
       invoke('recap_commits', { cwds, since: scan.since }).catch(() => []),
       invoke('repo_status', { cwds }).catch(() => []),
     ]);
-    repos = repoList.map(repoCard).sort((a, b) => b.attention - a.attention);
+    repos = sortRepos(repoList.map(repoRow));
     recap = buildRecap({ sessions: scan.sessions, commits, live: lastLive });
     todayAt = Date.now();
+    updatedAt.today = updatedAt.repos = todayAt;
     polishedText = null;
     renderToday();
+    renderRepos();
   } catch (e) {
-    $('today-total').textContent = 'Could not read today’s logs';
-    $('today-sub').textContent = String(e);
+    $('today-sub').textContent = 'Could not read today’s logs';
+    note(String(e));
   }
 }
 
 function renderToday() {
   const r = recap;
   const t = r.totals;
-  $('today-total').textContent = r.projects.length ? `${t.time} of agent work` : 'No agent work yet today';
-  $('today-sub').textContent = r.projects.length
-    ? `${t.projects} project${t.projects === 1 ? '' : 's'} · ${t.agents} agent${t.agents === 1 ? '' : 's'} · ${t.commits} commit${t.commits === 1 ? '' : 's'}`
-    : 'Sessions you start today show up here.';
+  const sub = $('today-sub');
+  if (r.projects.length) {
+    sub.replaceChildren(el('b', '', t.time), ` of agent work · ${plural(t.projects, 'project')} · ${plural(t.commits, 'commit')}`);
+  } else {
+    sub.textContent = '';
+  }
+  $('today-empty').hidden = r.projects.length > 0;
   $('today-list').replaceChildren(
     ...r.projects.map((p) => {
       const li = el('li');
-      const head = el('div', 'p-head');
-      head.append(el('span', 'p-name', p.project), el('span', 'p-time', p.time));
-      const counts = [p.files && `${p.files} file${p.files === 1 ? '' : 's'}`, p.commits.length && `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'}`].filter(Boolean);
-      li.append(head, el('div', 'p-line', [p.agents.join(', '), ...counts].join(' · ')));
-      if (p.titles.length) li.append(el('div', 'p-line', p.titles.join(' · ')));
+      li.append(el('span', 'name', p.project), el('span', 'right strong num', p.time));
+      if (p.titles.length) li.append(el('span', 'line', p.titles.join(' · ')));
+      const counts = [p.commits.length && plural(p.commits.length, 'commit'), p.files && plural(p.files, 'file')].filter(Boolean);
+      if (counts.length) li.append(el('span', 'line', counts.join(' · ')));
       return li;
     }),
   );
-  $('repos-head').hidden = !repos.length;
-  $('repos').replaceChildren(
-    ...repos.map((r) => {
-      const li = el('li', r.attention ? 'attention' : '');
-      const head = el('div', 'p-head');
-      head.append(el('span', 'p-name', r.name), el('span', 'p-branch', r.branch));
-      li.append(head, el('div', 'r-facts', r.facts.join(' · ')));
-      if (r.worktrees.length) li.append(el('div', 'p-line', `Worktrees: ${r.worktrees.join(', ')}`));
-      if (r.commands.length) {
-        const row = el('div', 'r-cmds');
-        for (const c of r.commands) {
-          const b = el('button', 'link inline', c.label);
-          b.title = c.cmd;
-          b.addEventListener('click', async () => {
-            try {
-              await navigator.clipboard.writeText(c.cmd);
-              b.textContent = 'Copied';
-            } catch {
-              b.textContent = 'Copy failed';
-            }
-            setTimeout(() => (b.textContent = c.label), 1500);
-          });
-          row.append(b);
-        }
-        li.append(row);
-      }
-      return li;
-    }),
-  );
-  // Just the count and a way there; the Waiting tab has the details.
-  const w = r.waiting.length;
-  $('today-wait').hidden = !w;
-  $('today-wait').textContent = `${w} session${w === 1 ? '' : 's'} waiting on you  →`;
   $('polished').hidden = !polishedText;
   $('polished').textContent = polishedText || '';
-  $('copy-recap').disabled = !r.projects.length;
-  $('copy-recap').textContent = polishedText ? 'Copy polished' : 'Copy for standup';
-  $('polish').disabled = !r.projects.length;
-  $('polish').title = prefs.recapWithClaude ? "Rewrites the recap with your own claude command" : 'Turn on "Polish recap with Claude" in Settings';
+  const copy = $('copy-recap');
+  copy.disabled = !r.projects.length;
+  copy.innerHTML = `${icon('copy', 's')}<span>${polishedText ? 'Copy polished' : 'Copy standup'}</span>`;
+  const polish = $('polish');
+  polish.disabled = !r.projects.length;
+  polish.innerHTML = `${icon('spark', 's')}<span>Polish</span>`;
+  polish.title = prefs.recapWithClaude ? 'Rewrites the recap with your own claude command' : 'Turn on "Polish recap with Claude" in Settings';
 }
 
-$('today-wait').addEventListener('click', () => setView('waiting'));
+function renderRepos() {
+  $('repos-empty').hidden = repos.length > 0;
+  $('repos').replaceChildren(
+    ...repos.map((r) => {
+      const li = el('li', 'dotted');
+      const name = el('span', 'name');
+      name.append(el('span', `dot ${r.dot}`), el('span', '', r.name));
+      const branch = el('span', 'right mono', r.branch);
+      branch.title = r.path;
+      li.append(name, branch, el('span', 'line', r.status));
+      return li;
+    }),
+  );
+}
+
 $('copy-recap').addEventListener('click', async () => {
-  const btn = $('copy-recap');
+  const label = $('copy-recap').querySelector('span');
   try {
     await navigator.clipboard.writeText(polishedText || recap.text);
-    btn.textContent = 'Copied';
+    label.textContent = 'Copied';
   } catch {
-    btn.textContent = 'Copy failed';
+    label.textContent = 'Copy failed';
   }
   setTimeout(renderToday, 1500);
 });
 
 $('polish').addEventListener('click', async () => {
   if (!prefs.recapWithClaude) {
-    lastView = 'today';
     setView('settings');
+    lastView = 'today';
     $('polish-msg').textContent = 'Turn this on to polish the recap.';
     return;
   }
   const btn = $('polish');
   btn.disabled = true;
-  btn.textContent = 'Asking Claude…';
+  btn.querySelector('span').textContent = 'Asking Claude…';
   try {
     polishedText = await invoke('polish_recap', { text: recap.text });
   } catch (e) {
-    $('today-sub').textContent = String(e);
+    note(String(e));
   } finally {
-    btn.textContent = 'Polish with Claude';
     renderToday();
   }
 });
 
 // --- Settings ---
 
-let lastView = 'waiting';
 function showSettings() {
   $('hotkey').textContent = hotkeyLabel(prefs.hotkey);
   $('notify').checked = prefs.notifyLimits;
@@ -511,12 +543,6 @@ async function saveSettings(next) {
   }
 }
 
-$('gear').addEventListener('click', () => {
-  if (view === 'settings') return setView(lastView);
-  lastView = view;
-  setView('settings');
-});
-$('back').addEventListener('click', () => setView(lastView));
 $('notify').addEventListener('change', (e) => saveSettings({ notifyLimits: e.target.checked }));
 $('test-notify').addEventListener('click', async (e) => {
   e.preventDefault();
@@ -535,11 +561,13 @@ $('hotkey').addEventListener('click', () => {
   btn.classList.add('recording');
   btn.textContent = 'Press keys…';
   $('hotkey-msg').textContent = '';
+  recordingHotkey = true;
   const onKey = async (e) => {
     e.preventDefault();
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return; // wait for the real key
     document.removeEventListener('keydown', onKey, true);
     btn.classList.remove('recording');
+    recordingHotkey = false;
     if (e.key === 'Escape') return showSettings();
     const mods = [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift', e.metaKey && 'super'].filter(Boolean);
     if (!mods.length && !/^F\d{1,2}$/.test(e.code)) {
@@ -552,10 +580,10 @@ $('hotkey').addEventListener('click', () => {
 });
 
 listen('panel-shown', () => {
-  loadLive(); // cheap: keeps the count current on both tabs
+  loadLive(); // cheap: keeps the Waiting dot current on every tab
   if (view === 'waiting') loadLimits();
   if (view === 'wrapped') load();
-  if (view === 'today') loadToday();
+  if (view === 'today' || view === 'repos') loadToday();
 });
 listen('open-report', async () => {
   if (!cache.get(days)) await load(true);
