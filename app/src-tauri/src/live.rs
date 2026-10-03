@@ -390,10 +390,15 @@ pub fn codex_state(log_tail: &str) -> Option<(State, i64)> {
 
 fn has_human_prompt(path: &Path) -> bool {
     // Cheap check over the raw bytes: one typed prompt anywhere is enough.
+    // Scheduled tasks are logged as human too, but nobody is waiting on them.
+    let human = br#""origin":{"kind":"human"}"#;
     std::fs::read(path).is_ok_and(|b| {
-        let needle = br#""origin":{"kind":"human"}"#;
-        b.windows(needle.len()).any(|w| w == needle)
+        b.split(|&c| c == b'\n').any(|l| contains(l, human) && !contains(l, b"<scheduled-task"))
     })
+}
+
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
 }
 
 fn claude_title(log_tail: &str) -> Option<String> {
@@ -620,6 +625,13 @@ mod tests {
     const NOW: i64 = 1_790_000_100_000;
     fn line(kind: &str, extra: &str) -> String {
         format!(r#"{{"type":"{kind}","timestamp":"2026-09-21T13:08:00.000Z"{extra}}}"#)
+    }
+
+    #[test]
+    fn scheduled_task_sessions_are_not_waiting_on_anyone() {
+        let fx = |n: &str| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wrapped/test/fixtures").join(n);
+        assert!(!has_human_prompt(&fx("claude-scheduled.jsonl")));
+        assert!(has_human_prompt(&fx("fork/aaa-original.jsonl")));
     }
 
     #[test]
