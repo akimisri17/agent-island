@@ -14,14 +14,15 @@ const run = (args) => execFileSync('cargo', ['run', '-q', '--release', '--exampl
 
 console.log('Reading today’s logs and repos with the Rust examples…');
 const scan = JSON.parse(run(['dump', '--', '1']));
+const scan30 = JSON.parse(run(['dump', '--', '30']));
 const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
 const repos = JSON.parse(run(['repos', '--', ...cwds]));
-const data = { scan, repos };
+const data = { scan, scan30, repos };
 
 const stub = `
 const data = ${JSON.stringify(data)};
 const handlers = {
-  scan_today: () => data.scan, scan: () => data.scan, repo_status: () => data.repos,
+  scan_today: () => data.scan, scan: () => data.scan30, repo_status: () => data.repos,
   recap_commits: () => [], live: () => [], limits: () => ({}),
   get_settings: () => ({ hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false }),
   set_settings: ({ next }) => next, open_report: () => null, jump: () => null, quit: () => null,
