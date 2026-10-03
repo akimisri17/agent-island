@@ -247,8 +247,13 @@ function closeMenu() {
 // One confirm sheet for every action that changes something. `run` does the
 // work; the sheet closes when it settles, and `run` reports its own result.
 let sheetRun = null;
+let sheetBusy = false;
+let sheetToken = null;
+let sheetOpener = null;
 function openSheet({ title, body, ok, run }) {
   closeMenu();
+  sheetOpener = document.activeElement;
+  sheetToken = {};
   $('sheet-title').textContent = title;
   $('sheet-body').replaceChildren(...body);
   $('sheet-ok').textContent = ok;
@@ -260,18 +265,27 @@ function openSheet({ title, body, ok, run }) {
 function closeSheet() {
   $('dim').hidden = $('sheet').hidden = true;
   sheetRun = null;
+  sheetToken = null;
+  const back = sheetOpener && document.contains(sheetOpener) ? sheetOpener : document.querySelector('#repos li.selected') || document.querySelector('#repos li');
+  sheetOpener = null;
+  if (back && back.focus) back.focus();
 }
-$('sheet-cancel').addEventListener('click', closeSheet);
-$('dim').addEventListener('click', closeSheet);
+const closeIfIdle = () => { if (!sheetBusy) closeSheet(); };
+$('sheet-cancel').addEventListener('click', closeIfIdle);
+$('dim').addEventListener('click', closeIfIdle);
 $('sheet-ok').addEventListener('click', async () => {
-  if (!sheetRun) return;
+  if (!sheetRun || sheetBusy) return;
   const run = sheetRun;
+  const token = {};
+  sheetToken = token;
+  sheetBusy = true;
   $('sheet-ok').disabled = true;
   $('sheet-ok').textContent = 'Working…';
   try {
     await run();
   } finally {
-    closeSheet();
+    sheetBusy = false;
+    if (sheetToken === token) closeSheet();
   }
 });
 
@@ -298,7 +312,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key === ',') return e.preventDefault(), setView('settings');
   if (mod && e.key === 'q') return e.preventDefault(), invoke('quit');
   if (e.key === 'Escape') {
-    if (!$('sheet').hidden) return closeSheet();
+    if (!$('sheet').hidden) return sheetBusy ? undefined : closeSheet();
     if (!$('menu').hidden) return closeMenu();
     if (view === 'settings') return setView(lastView);
     return window.__TAURI__.window.getCurrentWindow().hide();
@@ -458,9 +472,6 @@ let repos = [];
 
 async function loadToday(force = false) {
   if (!force && recap && Date.now() - todayAt < 60_000) return renderToday(), renderRepos();
-  const keep = keepResults ? new Map(repoResults) : new Map();
-  keepResults = false;
-  repoResults.clear();
   try {
     const [scan] = await Promise.all([invoke('scan_today'), loadLive()]);
     const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
@@ -470,7 +481,10 @@ async function loadToday(force = false) {
       invoke('repo_status', { cwds }).catch(() => []),
     ]);
     repos = sortRepos(repoList.map(repoRow));
-    for (const [k, v] of keep) repoResults.set(k, v);
+    for (const [k, v] of repoResults) {
+      v.reads += 1;
+      if (v.reads > 1) repoResults.delete(k);
+    }
     recap = buildRecap({ sessions: scan.sessions, commits, live: lastLive });
     todayAt = Date.now();
     updatedAt.today = updatedAt.repos = todayAt;
@@ -515,15 +529,16 @@ function renderToday() {
 }
 
 let selectedRepo = null; // path of the row showing its actions
-const repoResults = new Map(); // path -> { text, ok }, until the next read
-let keepResults = false; // set by afterAction for exactly one re-read
+const repoResults = new Map(); // path -> { text, ok, reads }, kept through the one read after the action
 
 function renderRepos() {
+  const hadFocus = document.activeElement?.closest?.('#repos li')?.dataset.path;
   $('repos-empty').hidden = repos.length > 0;
   $('repos').replaceChildren(
     ...repos.map((r) => {
       const li = el('li', r.path === selectedRepo ? 'dotted selected' : 'dotted');
       li.tabIndex = 0;
+      li.dataset.path = r.path;
       const result = repoResults.get(r.path);
       const name = el('span', 'name');
       name.append(el('span', `dot ${result ? (result.ok ? 'done' : 'failed') : r.dot}`), el('span', '', r.name));
@@ -540,6 +555,7 @@ function renderRepos() {
       return li;
     }),
   );
+  if (hadFocus) document.querySelector(`#repos li[data-path="${CSS.escape(hadFocus)}"]`)?.focus();
 }
 
 function actionButton(label, iconName, cls, onClick) {
@@ -559,9 +575,8 @@ function repoActions(r) {
 }
 
 async function afterAction(r, result) {
-  repoResults.set(r.path, result);
+  repoResults.set(r.path, { ...result, reads: 0 });
   selectedRepo = null;
-  keepResults = true;
   await loadToday(true);
 }
 
