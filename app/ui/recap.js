@@ -83,3 +83,31 @@ function standupText(projects, next) {
   if (next) sections.push(`Next\n- ${next.project && next.project !== next.title ? `${next.project}: ` : ''}${tidy(next.title)}`);
   return sections.length ? sections.join('\n\n') : 'No agent work today.';
 }
+
+// The Repo board: one card per repository agents worked in today, from local
+// git only. Commands are offered to copy, never run.
+const quote = (p) => (/^[\w@%+=:,./-]+$/.test(p) ? p : `'${p.replace(/'/g, `'\\''`)}'`);
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+export function repoCard(r) {
+  const facts = [];
+  if (r.changes) facts.push(plural(r.changes, 'uncommitted change'));
+  if (!r.upstream && !r.detached) facts.push('no upstream');
+  if (r.ahead) facts.push(`${r.ahead} to push`);
+  if (r.behind) facts.push(`${r.behind} to pull`);
+  if (r.stashes) facts.push(plural(r.stashes, 'stash', 'stashes'));
+  if (r.worktrees.length) facts.push(plural(r.worktrees.length, 'worktree'));
+  if (r.merged.length) facts.push(`${plural(r.merged.length, 'merged branch', 'merged branches')} to delete`);
+  const git = `git -C ${quote(r.path)}`;
+  const commands = [];
+  if (r.behind && !r.changes) commands.push({ label: 'Copy pull', cmd: `${git} pull --ff-only` });
+  if (r.merged.length) commands.push({ label: 'Copy cleanup', cmd: `${git} branch -d ${r.merged.map(quote).join(' ')}` });
+  return {
+    name: r.project,
+    branch: r.detached ? `detached at ${r.branch}` : r.branch,
+    facts: facts.length ? facts : ['clean, up to date with last fetch'],
+    attention: !!(r.changes || r.ahead || r.behind || r.merged.length),
+    worktrees: r.worktrees.map((w) => w.branch || w.path),
+    commands,
+  };
+}

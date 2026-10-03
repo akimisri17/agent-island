@@ -2,7 +2,7 @@
 // (synced into ./lib by scripts/sync-lib.mjs) turns them into numbers.
 import { computeStats, filterSessions, filterOptions } from './lib/stats.mjs';
 import { renderHtml, fmtNum, AGENT_NAMES } from './lib/render.mjs';
-import { buildRecap } from './recap.js';
+import { buildRecap, repoCard } from './recap.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -374,6 +374,7 @@ document.addEventListener('keydown', (e) => {
 let recap = null;
 let polishedText = null;
 let todayAt = 0;
+let repos = [];
 
 async function loadToday(force = false) {
   if (!force && recap && Date.now() - todayAt < 60_000) return renderToday();
@@ -381,7 +382,12 @@ async function loadToday(force = false) {
   try {
     const [scan] = await Promise.all([invoke('scan_today'), loadLive()]);
     const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
-    const commits = await invoke('recap_commits', { cwds, since: scan.since }).catch(() => []);
+    // Git runs in parallel with itself, and alongside the commit lookup.
+    const [commits, repoList] = await Promise.all([
+      invoke('recap_commits', { cwds, since: scan.since }).catch(() => []),
+      invoke('repo_status', { cwds }).catch(() => []),
+    ]);
+    repos = repoList.map(repoCard).sort((a, b) => b.attention - a.attention);
     recap = buildRecap({ sessions: scan.sessions, commits, live: lastLive });
     todayAt = Date.now();
     polishedText = null;
@@ -407,6 +413,35 @@ function renderToday() {
       const counts = [p.files && `${p.files} file${p.files === 1 ? '' : 's'}`, p.commits.length && `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'}`].filter(Boolean);
       li.append(head, el('div', 'p-line', [p.agents.join(', '), ...counts].join(' · ')));
       if (p.titles.length) li.append(el('div', 'p-line', p.titles.join(' · ')));
+      return li;
+    }),
+  );
+  $('repos-head').hidden = !repos.length;
+  $('repos').replaceChildren(
+    ...repos.map((r) => {
+      const li = el('li', r.attention ? 'attention' : '');
+      const head = el('div', 'p-head');
+      head.append(el('span', 'p-name', r.name), el('span', 'p-branch', r.branch));
+      li.append(head, el('div', 'p-line', r.facts.join(' · ')));
+      if (r.worktrees.length) li.append(el('div', 'p-line', `Worktrees: ${r.worktrees.join(', ')}`));
+      if (r.commands.length) {
+        const row = el('div', 'r-cmds');
+        for (const c of r.commands) {
+          const b = el('button', 'link inline', c.label);
+          b.title = c.cmd;
+          b.addEventListener('click', async () => {
+            try {
+              await navigator.clipboard.writeText(c.cmd);
+              b.textContent = 'Copied';
+            } catch {
+              b.textContent = 'Copy failed';
+            }
+            setTimeout(() => (b.textContent = c.label), 1500);
+          });
+          row.append(b);
+        }
+        li.append(row);
+      }
       return li;
     }),
   );
