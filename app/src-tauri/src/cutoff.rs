@@ -34,6 +34,8 @@ type Cut = (String, i64, &'static str, Option<String>, Option<i64>);
 
 /// What the end of one log says.
 struct Tail {
+    /// Programmatic (Agent SDK / `claude -p`) session: nobody typed in it.
+    sdk: bool,
     path: PathBuf,
     mtime: i64,
     session_id: String,
@@ -75,7 +77,7 @@ fn parse_ts(s: &str) -> Option<i64> {
 fn tail_of(path: &Path, mtime: i64) -> Option<Tail> {
     let text = read_tail(path)?;
     let session_id = path.file_stem()?.to_string_lossy().into_owned();
-    let mut t = Tail { path: path.to_path_buf(), mtime, session_id, title: None, cwd: None, last_human: None, cut: None };
+    let mut t = Tail { sdk: false, path: path.to_path_buf(), mtime, session_id, title: None, cwd: None, last_human: None, cut: None };
     for line in text.lines() {
         let Ok(mut d) = serde_json::from_str::<CLine>(line) else { continue };
         if d.kind == Some("custom-title") {
@@ -93,6 +95,13 @@ fn tail_of(path: &Path, mtime: i64) -> Option<Tail> {
             let resets = q.resets_at.map(|s| (s * 1000.0) as i64);
             t.cut = Some((uuid, at, "limit", q.rate_limit_type.clone(), resets));
             continue;
+        }
+        if d.kind == Some("assistant") && d.message.as_ref().and_then(|m| m.model.as_deref()) != Some("<synthetic>") {
+            // A real reply: the session carried on after the cut.
+            t.cut = None;
+        }
+        if d.kind == Some("user") && d.entrypoint.is_some_and(|e| e.starts_with("sdk")) {
+            t.sdk = true;
         }
         if d.kind == Some("user") && d.is_sidechain != Some(true) {
             if block_text(&d).is_some_and(|x| INTERRUPTED.contains(&x.trim())) {
@@ -137,7 +146,7 @@ pub fn find(projects: &Path, now: i64) -> Vec<CutOff> {
     let tails: Vec<Tail> = files.iter().filter_map(|(p, m)| tail_of(p, *m)).collect();
 
     let mut out = Vec::new();
-    for t in &tails {
+    for t in tails.iter().filter(|t| !t.sdk) {
         let Some((uuid, at, kind, limit_type, resets_at)) = &t.cut else { continue };
         if *at < since || t.last_human.is_some_and(|h| h > *at) {
             continue;
@@ -147,7 +156,7 @@ pub fn find(projects: &Path, now: i64) -> Vec<CutOff> {
         }
         // Resumed or forked: another log copied this line and went on.
         let needle = format!("\"uuid\":\"{uuid}\"");
-        let resolved = tails.iter().any(|o| {
+        let resolved = !uuid.is_empty() && tails.iter().any(|o| {
             o.path != t.path
                 && o.mtime >= *at
                 && o.last_human.is_some_and(|h| h > *at)
@@ -271,6 +280,23 @@ mod tests {
         copy.push(human("u9", NOW - H / 2, "continue"));
         write(&d, "ffff-copy.jsonl", &copy);
         assert!(find(&d, NOW).is_empty(), "the copy has a prompt after the cut-off line");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn sdk_sessions_are_ignored() {
+        let d = dir("sdk");
+        let sdk_user = format!(r#"{{"type":"user","uuid":"u1","timestamp":"{}","sessionId":"s","cwd":"/w/shop","entrypoint":"sdk-cli","message":{{"role":"user","content":"go"}}}}"#, ts(NOW - 3 * H));
+        write(&d, "hhhh.jsonl", &[sdk_user, limit("l1", NOW - 2 * H, (NOW - H) / 1000)]);
+        assert!(find(&d, NOW).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_real_reply_after_the_limit_clears_it() {
+        let d = dir("reply");
+        write(&d, "iiii.jsonl", &[human("u1", NOW - 3 * H, "go"), limit("l1", NOW - 2 * H, (NOW - H) / 1000), assistant("a2", NOW - H / 2)]);
+        assert!(find(&d, NOW).is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }
 
