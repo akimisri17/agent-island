@@ -238,7 +238,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <h2>Get Agent Island</h2>
     <ol class="steps">
       <li><b>Download</b> the installer for your system from the <a href="https://github.com/akimisri17/agent-island/releases">Releases page</a>: a <code>.dmg</code> for macOS (Apple silicon or Intel), or a <code>.msi</code> or <code>.exe</code> for Windows.</li>
-      <li><b>Open it once.</b> The builds are not signed yet. On macOS, right-click <b>Agent Island.app</b>, choose <b>Open</b>, then <b>Open</b> again. On Windows, click <b>More info</b> and then <b>Run anyway</b>.</li>
+      <li><b>Allow it once.</b> The builds are not signed yet, so macOS says it "could not verify" Agent Island. Click <b>Done</b>, open <b>System Settings → Privacy &amp; Security</b>, and click <b>Open Anyway</b> next to "Agent Island" was blocked. Or run <code>xattr -dr com.apple.quarantine "/Applications/Agent Island.app"</code> once in Terminal. On Windows, click <b>More info</b> and then <b>Run anyway</b>.</li>
       <li><b>Click the icon</b> in your menu bar or system tray, or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>J</kbd>.</li>
     </ol>
     <p class="note">Prefer to build it yourself? You need Node 20+ and Rust. <a href="https://github.com/akimisri17/agent-island#build-from-source">Instructions are in the README</a>.</p>
