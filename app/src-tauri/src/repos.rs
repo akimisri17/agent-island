@@ -102,6 +102,29 @@ pub fn pull(path: &Path) -> Result<u32, String> {
     Ok(n.trim().parse().unwrap_or(0))
 }
 
+/// Deletes the asked-for local branches that the board still lists as old:
+/// merged ones with `-d` (git refuses if anything is unmerged), gone ones
+/// with `-D` (a squash or rebase merge leaves them unmerged as far as git can
+/// tell). Anything else asked for is skipped. Returns the deleted names.
+pub fn delete_old_branches(path: &Path, names: &[String]) -> Result<Vec<String>, String> {
+    check_root(path)?;
+    let st = repo_status(path).ok_or("Could not read the repository.")?;
+    let mut deleted = Vec::new();
+    for name in names {
+        let flag = if st.merged.contains(name) {
+            "-d"
+        } else if st.gone.contains(name) {
+            "-D"
+        } else {
+            continue;
+        };
+        // `--` keeps a name from ever being read as an option.
+        git_run(path, &["branch", flag, "--", name])?;
+        deleted.push(name.clone());
+    }
+    Ok(deleted)
+}
+
 /// The main repository folder for a working directory. Linked worktrees fold
 /// into the repository they belong to.
 fn repo_root(cwd: &Path) -> Option<PathBuf> {
@@ -379,6 +402,32 @@ mod tests {
         std::fs::create_dir_all(mine.join("sub")).unwrap();
         assert_eq!(pull(&mine.join("sub")), Err("Not a repository folder.".to_string()));
         assert_eq!(pull(&base), Err("Not a repository folder.".to_string()));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn deletes_only_branches_still_listed_as_old() {
+        let (base, mine, _) = remote_and_clone("delete");
+        let sh = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(&mine).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success(), "git {args:?}");
+        sh(&["branch", "done"]); // merged into main
+        sh(&["checkout", "-qb", "squashed"]);
+        std::fs::write(mine.join("s.txt"), "s").unwrap();
+        sh(&["add", "s.txt"]);
+        sh(&["commit", "-qm", "work"]);
+        sh(&["push", "-q", "-u", "origin", "squashed"]);
+        sh(&["checkout", "-q", "main"]);
+        sh(&["push", "-q", "origin", "--delete", "squashed"]);
+        sh(&["fetch", "-q", "--prune"]);
+        sh(&["branch", "keep"]); // merged too, but not asked for
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        let deleted = delete_old_branches(&mine, &names(&["done", "squashed", "main", "-D", "nope"])).unwrap();
+        assert_eq!(deleted, vec!["done", "squashed"], "only listed old branches; not the current one, not flags, not unknown names");
+        let left = git_run(&mine, &["branch", "--format=%(refname:short)"]).unwrap();
+        let left: Vec<&str> = left.lines().collect();
+        assert!(left.contains(&"main") && left.contains(&"keep"));
+        assert!(!left.contains(&"done") && !left.contains(&"squashed"));
+        assert_eq!(delete_old_branches(&mine.join("nope"), &names(&["keep"])), Err("Not a repository folder.".to_string()));
         let _ = std::fs::remove_dir_all(&base);
     }
 }
