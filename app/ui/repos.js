@@ -31,10 +31,46 @@ export function repoRow(r) {
     status: parts.length ? parts.join(' · ') : 'Clean',
     dot: needs ? 'needs' : parts.length ? 'none' : 'done',
     canPull: r.behind > 0 && !r.changes,
+    behind: r.behind,
     oldBranches,
   };
 }
 
 export function sortRepos(rows) {
   return [...rows].sort((a, b) => DOT_ORDER[a.dot] - DOT_ORDER[b.dot] || a.name.localeCompare(b.name));
+}
+
+// What the confirm sheets say. The command is shown exactly as it will run.
+export function pullSheet(row) {
+  return {
+    title: `Pull ${plural(row.behind, 'commit')} into ${row.branch}?`,
+    command: 'git pull --ff-only',
+    note: 'Only fast-forwards. Stops if it would need a merge.',
+    ok: 'Pull',
+  };
+}
+
+export function branchSheet(row) {
+  const n = row.oldBranches.length;
+  const anyGone = row.oldBranches.some((b) => b.reason === 'gone');
+  return {
+    title: `${plural(n, 'old branch', 'old branches')} in ${row.name}`,
+    note: 'Their work is already in the main branch, or their pull request was merged and the branch was deleted on the remote. Only your local copies are deleted.',
+    items: row.oldBranches.map((b) => ({ name: b.name, why: b.reason === 'merged' ? 'merged' : 'gone from remote' })),
+    warning: anyGone
+      ? 'Gone branches are force-deleted. If you committed to one after its pull request was merged, those commits are deleted too.'
+      : null,
+    ok: `Delete ${n}`,
+  };
+}
+
+// The line a row shows after an action, until the next refresh.
+export function resultLine(kind, value) {
+  if (kind === 'pull') return { text: `Pulled ${plural(value, 'commit')}`, ok: true };
+  if (kind === 'delete') {
+    return value.length
+      ? { text: `Deleted ${plural(value.length, 'old branch', 'old branches')}`, ok: true }
+      : { text: 'Nothing deleted: the list changed. Refresh and try again.', ok: false };
+  }
+  return { text: String(value), ok: false };
 }
