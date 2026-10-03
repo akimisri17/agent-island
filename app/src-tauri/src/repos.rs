@@ -56,6 +56,52 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Runs git for an action. Never prompts (no terminal to answer in); a
+/// failure returns git's first non-empty error line.
+fn git_run(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Could not run git: {e}"))?;
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let line = err.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("git failed");
+    Err(line.trim_start_matches("fatal: ").trim_start_matches("error: ").to_string())
+}
+
+/// Actions only run on a repository's own top folder, as listed on the board.
+fn check_root(path: &Path) -> Result<(), String> {
+    match repo_root(path) {
+        Some(root) if root == path => Ok(()),
+        _ => Err("Not a repository folder.".into()),
+    }
+}
+
+/// Fast-forwards the current branch to its upstream. Re-reads the state
+/// first, so a stale button cannot pull over local changes. Returns how many
+/// commits arrived.
+pub fn pull(path: &Path) -> Result<u32, String> {
+    check_root(path)?;
+    let st = repo_status(path).ok_or("Could not read the repository.")?;
+    if st.changes > 0 {
+        return Err("Commit or stash your changes first.".into());
+    }
+    if st.behind == 0 {
+        return Err("Nothing to pull.".into());
+    }
+    let before = git_run(path, &["rev-parse", "HEAD"])?;
+    git_run(path, &["pull", "--ff-only", "--quiet"])?;
+    let range = format!("{}..HEAD", before.trim());
+    let n = git_run(path, &["rev-list", "--count", &range])?;
+    Ok(n.trim().parse().unwrap_or(0))
+}
+
 /// The main repository folder for a working directory. Linked worktrees fold
 /// into the repository they belong to.
 fn repo_root(cwd: &Path) -> Option<PathBuf> {
@@ -256,5 +302,83 @@ mod tests {
         assert!(!dir.join(".git/index.lock").exists());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&remote);
+    }
+
+    /// A clone of a bare remote, with a second clone that can push to it.
+    fn remote_and_clone(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("ai-pull-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let base = base.canonicalize().unwrap();
+        let sh = |dir: &Path, args: &[&str]| {
+            let ok = Command::new("git").arg("-C").arg(dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+            assert!(ok.success(), "git {args:?}");
+        };
+        let remote = base.join("remote.git");
+        sh(&base, &["init", "-q", "--bare", "-b", "main", "remote.git"]);
+        let mine = base.join("mine");
+        let other = base.join("other");
+        for c in [&mine, &other] {
+            sh(&base, &["clone", "-q", &remote.to_string_lossy(), &c.to_string_lossy()]);
+            sh(c, &["config", "user.email", "t@t"]);
+            sh(c, &["config", "user.name", "t"]);
+        }
+        std::fs::write(other.join("a.txt"), "1").unwrap();
+        sh(&other, &["add", "."]);
+        sh(&other, &["commit", "-qm", "one"]);
+        sh(&other, &["push", "-q", "origin", "main"]);
+        sh(&mine, &["pull", "-q", "origin", "main"]);
+        sh(&mine, &["branch", "-q", "--set-upstream-to=origin/main", "main"]);
+        // Two new commits on the remote that `mine` has fetched but not merged.
+        for n in ["2", "3"] {
+            std::fs::write(other.join("a.txt"), n).unwrap();
+            sh(&other, &["commit", "-qam", n]);
+        }
+        sh(&other, &["push", "-q", "origin", "main"]);
+        sh(&mine, &["fetch", "-q"]);
+        (base, mine, other)
+    }
+
+    #[test]
+    fn pull_fast_forwards_and_counts_commits() {
+        let (base, mine, _) = remote_and_clone("ok");
+        assert_eq!(pull(&mine), Ok(2));
+        let r = repo_status(&mine).unwrap();
+        assert_eq!((r.behind, r.changes), (0, 0));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pull_refuses_with_local_changes_or_nothing_to_pull() {
+        let (base, mine, _) = remote_and_clone("dirty");
+        std::fs::write(mine.join("b.txt"), "local").unwrap();
+        assert_eq!(pull(&mine), Err("Commit or stash your changes first.".to_string()));
+        std::fs::remove_file(mine.join("b.txt")).unwrap();
+        assert_eq!(pull(&mine), Ok(2));
+        assert_eq!(pull(&mine), Err("Nothing to pull.".to_string()));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pull_stops_when_a_merge_would_be_needed() {
+        let (base, mine, _) = remote_and_clone("diverged");
+        std::fs::write(mine.join("c.txt"), "mine").unwrap();
+        let ok = Command::new("git").arg("-C").arg(&mine).args(["add", "."]).status().unwrap().success()
+            && Command::new("git").arg("-C").arg(&mine).args(["commit", "-qm", "mine"]).status().unwrap().success();
+        assert!(ok);
+        let err = pull(&mine).unwrap_err();
+        assert!(!err.is_empty(), "git's reason is passed on");
+        let r = repo_status(&mine).unwrap();
+        assert_eq!((r.ahead, r.behind), (1, 2), "nothing was merged");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn actions_refuse_folders_that_are_not_a_repository_root() {
+        let (base, mine, _) = remote_and_clone("root");
+        std::fs::create_dir_all(mine.join("sub")).unwrap();
+        assert_eq!(pull(&mine.join("sub")), Err("Not a repository folder.".to_string()));
+        assert_eq!(pull(&base), Err("Not a repository folder.".to_string()));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
