@@ -37,6 +37,10 @@ pub struct RepoStatus {
     /// Local branches already merged into the default branch, other than
     /// the default itself and any branch checked out somewhere.
     pub merged: Vec<String>,
+    /// Local branches whose upstream was deleted on the remote, usually
+    /// because their PR was merged by rebase or squash, which leaves them
+    /// unmerged as far as git can tell. Not repeated from `merged`.
+    pub gone: Vec<String>,
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -86,8 +90,8 @@ fn repo_status(root: &Path) -> Option<RepoStatus> {
     r.stashes = git(root, &["stash", "list"]).map_or(0, |s| s.lines().count() as u32);
     let all = git(root, &["worktree", "list", "--porcelain"]).map(|s| parse_worktrees(&s)).unwrap_or_default();
     r.default_branch = default_branch(root);
+    let checked_out: BTreeSet<&str> = all.iter().filter_map(|w| w.branch.as_deref()).chain([r.branch.as_str()]).collect();
     if let Some(def) = &r.default_branch {
-        let checked_out: BTreeSet<&str> = all.iter().filter_map(|w| w.branch.as_deref()).chain([r.branch.as_str()]).collect();
         let merged = git(root, &["branch", "--merged", def, "--format=%(refname:short)"]).unwrap_or_default();
         r.merged = merged
             .lines()
@@ -96,6 +100,11 @@ fn repo_status(root: &Path) -> Option<RepoStatus> {
             .map(str::to_string)
             .collect();
     }
+    let refs = git(root, &["for-each-ref", "--format=%(refname:short)%09%(upstream:track)", "refs/heads"]).unwrap_or_default();
+    r.gone = parse_gone(&refs)
+        .into_iter()
+        .filter(|b| Some(b) != r.default_branch.as_ref() && !checked_out.contains(b.as_str()) && !r.merged.contains(b))
+        .collect();
     r.worktrees = all.into_iter().filter(|w| Path::new(&w.path) != root).collect();
     Some(r)
 }
@@ -140,6 +149,12 @@ pub fn parse_status(s: &str) -> RepoStatus {
     r
 }
 
+/// Branches marked `[gone]` in `for-each-ref` output of
+/// `%(refname:short)<TAB>%(upstream:track)`.
+pub fn parse_gone(s: &str) -> Vec<String> {
+    s.lines().filter_map(|l| l.split_once('\t')).filter(|(_, t)| *t == "[gone]").map(|(b, _)| b.to_string()).collect()
+}
+
 /// Reads `git worktree list --porcelain`: blank-line separated records.
 pub fn parse_worktrees(s: &str) -> Vec<Worktree> {
     let mut out = Vec::new();
@@ -175,6 +190,11 @@ mod tests {
     }
 
     #[test]
+    fn parses_gone_upstreams() {
+        assert_eq!(parse_gone("main\t\nfeat/a\t[gone]\nfeat/b\t[ahead 1]\n"), vec!["feat/a"]);
+    }
+
+    #[test]
     fn parses_worktree_records() {
         let w = parse_worktrees("worktree /r\nHEAD abc\nbranch refs/heads/main\n\nworktree /r/.worktrees/x\nHEAD def\ndetached\n");
         assert_eq!(w, vec![
@@ -203,6 +223,20 @@ mod tests {
         run(&["branch", "done"]); // merged into main
         run(&["branch", "busy"]);
         run(&["worktree", "add", "-q", ".worktrees/busy", "busy"]); // merged, but checked out
+        // A branch with its own commit whose remote branch was deleted, as
+        // after a squash or rebase merge.
+        let remote = dir.with_extension("remote");
+        let _ = std::fs::remove_dir_all(&remote);
+        let ok = Command::new("git").args(["init", "-q", "--bare"]).arg(&remote).status().unwrap();
+        assert!(ok.success());
+        run(&["remote", "add", "origin", &remote.to_string_lossy()]);
+        run(&["checkout", "-qb", "squashed"]);
+        std::fs::write(dir.join("s.txt"), "s").unwrap();
+        run(&["add", "s.txt"]);
+        run(&["commit", "-qm", "work"]);
+        run(&["push", "-q", "-u", "origin", "squashed"]);
+        run(&["checkout", "-q", "main"]);
+        run(&["push", "-q", "origin", "--delete", "squashed"]);
         std::fs::write(dir.join("a.txt"), "2").unwrap();
         run(&["stash", "-q"]);
         std::fs::write(dir.join("b.txt"), "new").unwrap();
@@ -216,9 +250,11 @@ mod tests {
         assert_eq!(r.stashes, 1);
         assert_eq!(r.default_branch.as_deref(), Some("main"));
         assert_eq!(r.merged, vec!["done"]);
+        assert_eq!(r.gone, vec!["squashed"]);
         assert_eq!(r.worktrees.len(), 1);
         assert_eq!(r.worktrees[0].branch.as_deref(), Some("busy"));
         assert!(!dir.join(".git/index.lock").exists());
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&remote);
     }
 }
