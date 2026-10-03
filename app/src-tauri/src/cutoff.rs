@@ -30,6 +30,11 @@ pub struct CutOff {
     pub resets_at: Option<i64>,
 }
 
+/// The folder of a listed session, if it is in `list` and has one.
+pub fn cwd_of(list: &[CutOff], session_id: &str) -> Option<String> {
+    list.iter().find(|c| c.session_id == session_id && !c.cwd.is_empty()).map(|c| c.cwd.clone())
+}
+
 type Cut = (String, i64, &'static str, Option<String>, Option<i64>);
 
 /// What the end of one log says.
@@ -185,6 +190,15 @@ pub fn find(projects: &Path, now: i64) -> Vec<CutOff> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn cwd_of_finds_only_listed_sessions() {
+        let mk = |id: &str, cwd: &str| CutOff { session_id: id.into(), title: None, project: None, cwd: cwd.into(), kind: "limit", limit_type: None, at: 0, resets_at: None };
+        let list = vec![mk("a", "/w/a"), mk("b", "")];
+        assert_eq!(cwd_of(&list, "a"), Some("/w/a".to_string()));
+        assert_eq!(cwd_of(&list, "b"), None, "empty folder");
+        assert_eq!(cwd_of(&list, "c"), None, "unlisted");
+    }
 
     const NOW: i64 = 1_790_000_000_000; // ms
     fn ts(ms: i64) -> String {
