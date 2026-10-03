@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { icon, ICONS, sprite } from '../ui/icons.js';
 
 test('icons: one family, every icon in the sprite, helper refers to it', () => {
-  for (const name of ['clock', 'sun', 'branch', 'chart', 'more', 'back', 'arrow', 'copy', 'spark']) {
+  for (const name of ['clock', 'sun', 'branch', 'chart', 'more', 'back', 'arrow', 'copy', 'spark', 'down', 'term', 'trash']) {
     assert.ok(ICONS.includes(name), name);
     assert.match(sprite(), new RegExp(`<symbol id="i-${name}" viewBox="0 0 24 24">`));
   }
