@@ -77,7 +77,8 @@ code { font: 11.5px ui-monospace, Menlo, monospace; }
 .today { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .repos-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 6px; }
 .repos .p-branch { color: var(--muted); font-weight: 500; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repos li.attention .p-line:first-of-type { color: var(--accent); }
+.repos .r-facts { color: var(--muted); font-size: 11.5px; }
+.repos li.attention .r-facts { color: var(--accent); }
 .repos .r-cmds { display: flex; gap: 8px; margin-top: 2px; }
 .today li { border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 7px 10px; }
 .today .p-head { display: flex; justify-content: space-between; gap: 8px; }
