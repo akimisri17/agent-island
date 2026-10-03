@@ -50,13 +50,20 @@ pub fn launch(app: &str, dir: &Path) -> (String, Vec<String>) {
 
 /// Opens the chosen terminal in `dir`.
 pub fn open(pick: Option<&str>, dir: &Path) -> Result<(), String> {
-    if !dir.is_dir() {
+    if !dir.is_absolute() || !dir.is_dir() {
         return Err("That folder no longer exists.".into());
     }
     let app = choose(pick, &installed()).ok_or("No supported terminal app found.")?;
     let (prog, args) = launch(&app, dir);
-    let ok = Command::new(&prog).args(&args).status().map_err(|e| format!("Could not open {app}: {e}"))?;
-    if ok.success() { Ok(()) } else { Err(format!("Could not open {app}.")) }
+    let mut cmd = Command::new(&prog);
+    cmd.args(&args);
+    if cfg!(windows) {
+        // Windows Terminal stays running; don't hold a thread waiting on it.
+        cmd.spawn().map(|_| ()).map_err(|e| format!("Could not open {app}: {e}"))
+    } else {
+        let ok = cmd.status().map_err(|e| format!("Could not open {app}: {e}"))?;
+        if ok.success() { Ok(()) } else { Err(format!("Could not open {app}.")) }
+    }
 }
 
 #[cfg(test)]
@@ -80,6 +87,11 @@ mod tests {
         assert_eq!(choose(Some("Warp"), &installed), Some("Ghostty".to_string()), "a removed app falls back");
         assert_eq!(choose(None, &installed), Some("Ghostty".to_string()));
         assert_eq!(choose(None, &[]), None);
+    }
+
+    #[test]
+    fn relative_folders_are_rejected() {
+        assert!(open(None, Path::new("relative/dir")).is_err());
     }
 
     #[test]
