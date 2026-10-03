@@ -25,6 +25,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-positioner",
  "tokio",
+ "windows",
 ]
 
 [[package]]

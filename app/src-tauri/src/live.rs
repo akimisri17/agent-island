@@ -105,31 +105,73 @@ fn resume_id(cmd: &[String]) -> Option<String> {
     None
 }
 
-/// The outermost .app bundle among a process's ancestors: the app the person
-/// sees. Bundles inside an agent's own install (claude-code/…/claude.app) are
-/// skipped.
-fn host_bundle(sys: &System, pid: Pid) -> Option<PathBuf> {
-    let mut found = None;
-    let mut cur = sys.process(pid).and_then(|p| p.parent());
-    let mut guard = 0;
-    while let (Some(p), true) = (cur.and_then(|c| sys.process(c)), guard < 64) {
-        guard += 1;
-        if let Some(exe) = p.exe() {
-            let s = exe.to_string_lossy();
-            if let Some(i) = s.find(".app/") {
-                let bundle = &s[..i + 4];
-                if !bundle.contains("/claude-code/") {
-                    found = Some(PathBuf::from(bundle));
-                }
-            }
-        }
-        cur = p.parent();
-    }
-    found
+/// Apps that host agent sessions on Windows, matched by executable name.
+const WINDOWS_HOSTS: [&str; 14] = [
+    "windowsterminal.exe",
+    "code.exe",
+    "cursor.exe",
+    "windsurf.exe",
+    "zed.exe",
+    "antigravity.exe",
+    "claude.exe",
+    "wezterm-gui.exe",
+    "alacritty.exe",
+    "hyper.exe",
+    "tabby.exe",
+    "idea64.exe",
+    "pycharm64.exe",
+    "warp.exe",
+];
+/// Editors that focus the window for a folder when opened with it.
+const EDITORS: [&str; 7] = ["Visual Studio Code", "Code", "Cursor", "Windsurf", "Zed", "VSCodium", "Antigravity"];
+
+/// Index of the host in an ancestor chain (nearest first): the outermost
+/// known app. `claude.exe` only counts as a host above the agent itself, so
+/// the Claude desktop app is found but the agent binary is not.
+fn pick_windows_host(chain: &[String]) -> Option<usize> {
+    chain.iter().rposition(|exe| WINDOWS_HOSTS.contains(&exe.to_ascii_lowercase().as_str()))
 }
 
-/// The running Cursor app's bundle, if Cursor is open.
+fn ancestors(sys: &System, pid: Pid) -> Vec<(Pid, Option<PathBuf>)> {
+    let mut out = Vec::new();
+    let mut cur = sys.process(pid).and_then(|p| p.parent());
+    while let Some(p) = cur.and_then(|c| sys.process(c)) {
+        if out.len() >= 64 || out.iter().any(|(q, _)| *q == p.pid()) {
+            break;
+        }
+        out.push((p.pid(), p.exe().map(Path::to_path_buf)));
+        cur = p.parent();
+    }
+    out
+}
+
+/// The app the person sees for a session: on macOS the outermost .app bundle
+/// among its ancestors (skipping bundles inside an agent's own install, like
+/// claude-code/…/claude.app); on Windows the outermost known host app.
+#[cfg(windows)]
+fn host_bundle(sys: &System, pid: Pid) -> Option<PathBuf> {
+    let chain = ancestors(sys, pid);
+    let names: Vec<String> = chain.iter().map(|(_, e)| e.as_ref().and_then(|e| e.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).collect();
+    pick_windows_host(&names).and_then(|i| chain[i].1.clone())
+}
+
+#[cfg(not(windows))]
+fn host_bundle(sys: &System, pid: Pid) -> Option<PathBuf> {
+    ancestors(sys, pid).iter().rev().find_map(|(_, exe)| {
+        let s = exe.as_ref()?.to_string_lossy().into_owned();
+        let bundle = &s[..s.find(".app/")? + 4];
+        (!bundle.contains("/claude-code/")).then(|| PathBuf::from(bundle))
+    })
+}
+
+/// The running Cursor app: its .app bundle on macOS, Cursor.exe on Windows.
 fn cursor_bundle(sys: &System) -> Option<PathBuf> {
+    if cfg!(windows) {
+        return sys.processes().values().find_map(|p| {
+            let exe = p.exe()?;
+            exe.file_name().is_some_and(|n| n.eq_ignore_ascii_case("Cursor.exe")).then(|| exe.to_path_buf())
+        });
+    }
     sys.processes().values().find_map(|p| {
         let exe = p.exe()?.to_string_lossy().into_owned();
         let i = exe.find(".app/Contents/MacOS/")?;
@@ -480,10 +522,9 @@ pub fn jump(s: &LiveSession) -> Result<(), String> {
     }
     // Editors (VS Code, Cursor, Windsurf, Zed, …) focus the window for a folder
     // when opened with it; other apps just come forward.
-    let editors = ["Visual Studio Code", "Code", "Cursor", "Windsurf", "Zed", "VSCodium", "Antigravity"];
     let mut cmd = Command::new("open");
     cmd.arg("-a").arg(bundle);
-    if editors.iter().any(|e| app.contains(e)) {
+    if EDITORS.iter().any(|e| app.contains(e)) {
         cmd.arg(&s.cwd);
     }
     match cmd.status() {
@@ -492,9 +533,66 @@ pub fn jump(s: &LiveSession) -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows: editors are reopened on the session's folder, which focuses that
+/// window; any other host's visible top-level window is brought forward.
+#[cfg(windows)]
+pub fn jump(s: &LiveSession) -> Result<(), String> {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER,
+        SW_RESTORE,
+    };
+    let Some(exe) = &s.host_bundle else { return Err("no app found for this session".into()) };
+    let app = exe.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if EDITORS.iter().any(|e| app.eq_ignore_ascii_case(e)) && !s.cwd.is_empty() {
+        return std::process::Command::new(exe).arg(&s.cwd).spawn().map(|_| ()).map_err(|e| format!("could not open {app}: {e}"));
+    }
+
+    // Pids of the session's ancestors; the host is one of them.
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_exe(UpdateKind::Always));
+    let pids: Vec<u32> = ancestors(&sys, Pid::from_u32(s.pid)).iter().map(|(p, _)| p.as_u32()).collect();
+
+    struct Search {
+        pids: Vec<u32>,
+        found: Vec<(usize, HWND)>,
+    }
+    unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+        let search = unsafe { &mut *(lparam.0 as *mut Search) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        let top_level = unsafe { GetWindow(hwnd, GW_OWNER) }.map_or(true, |o| o.is_invalid());
+        let visible = unsafe { IsWindowVisible(hwnd) }.as_bool() && unsafe { GetWindowTextLengthW(hwnd) } > 0;
+        if visible && top_level {
+            if let Some(i) = search.pids.iter().position(|p| *p == pid) {
+                search.found.push((i, hwnd));
+            }
+        }
+        true.into()
+    }
+    let mut search = Search { pids, found: Vec::new() };
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(&mut search as *mut Search as isize));
+    }
+    // Prefer the outermost ancestor's window: the terminal or app itself.
+    let Some((_, hwnd)) = search.found.into_iter().max_by_key(|(i, _)| *i) else {
+        return Err(format!("could not find a window for {app}"));
+    };
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        if SetForegroundWindow(hwnd).as_bool() {
+            Ok(())
+        } else {
+            Err(format!("Windows did not let {app} come to the front"))
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn jump(_s: &LiveSession) -> Result<(), String> {
-    Err("Jumping to a session is macOS-only for now".into())
+    Err("Jumping to a session is not supported on this system yet".into())
 }
 
 #[cfg(test)]
@@ -586,6 +684,18 @@ mod tests {
         assert_eq!(cursor_chat_state(&chat(&user_last), now), None);
         let archived = format!(r#"{{"status":"completed","isArchived":true,"lastUpdatedAt":{recent},"fullConversationHeadersOnly":[{{"type":2}}]}}"#);
         assert_eq!(cursor_chat_state(&chat(&archived), now), None);
+    }
+
+    #[test]
+    fn windows_host_is_outermost_known_app() {
+        let chain = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // claude.exe <- pwsh <- OpenConsole <- WindowsTerminal <- explorer
+        assert_eq!(pick_windows_host(&chain(&["pwsh.exe", "OpenConsole.exe", "WindowsTerminal.exe", "explorer.exe"])), Some(2));
+        // VS Code's integrated terminal: shell <- Code (helper) <- Code (main)
+        assert_eq!(pick_windows_host(&chain(&["powershell.exe", "Code.exe", "Code.exe", "explorer.exe"])), Some(2));
+        // Claude desktop app runs the agent directly.
+        assert_eq!(pick_windows_host(&chain(&["Claude.exe", "explorer.exe"])), Some(0));
+        assert_eq!(pick_windows_host(&chain(&["cmd.exe", "explorer.exe"])), None);
     }
 
     #[test]
