@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "sync": "node scripts/sync-lib.mjs",
+    "preview": "node scripts/sync-lib.mjs && node scripts/preview.mjs",
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
