@@ -1,0 +1,50 @@
+// Dev-only: serves app/ui in a browser with window.__TAURI__ stubbed, fed by
+// real data from the Rust examples (today's sessions and repo status). Never
+// shipped: the stub is injected by this server, not stored in ui/.
+//   npm run preview        -> http://localhost:5174
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ui = fileURLToPath(new URL('../ui/', import.meta.url));
+const tauri = fileURLToPath(new URL('../src-tauri/', import.meta.url));
+const run = (args) => execFileSync('cargo', ['run', '-q', '--release', '--example', ...args], { cwd: tauri, maxBuffer: 1 << 30 }).toString();
+
+console.log('Reading today’s logs and repos with the Rust examples…');
+const scan = JSON.parse(run(['dump', '--', '1']));
+const cwds = [...new Set(scan.sessions.map((s) => s.cwd).filter(Boolean))];
+const repos = JSON.parse(run(['repos', '--', ...cwds]));
+const data = { scan, repos };
+
+const stub = `
+const data = ${JSON.stringify(data)};
+const handlers = {
+  scan_today: () => data.scan, scan: () => data.scan, repo_status: () => data.repos,
+  recap_commits: () => [], live: () => [], limits: () => ({}),
+  get_settings: () => ({ hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false }),
+  set_settings: ({ next }) => next, open_report: () => null, jump: () => null, quit: () => null,
+};
+window.__TAURI__ = {
+  core: { invoke: async (cmd, args) => { if (!handlers[cmd]) throw new Error(cmd + ' is not stubbed'); return handlers[cmd](args || {}); } },
+  event: { listen: async () => () => {} },
+  window: { getCurrentWindow: () => ({ hide() {} }) },
+};`;
+
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css' };
+createServer(async (req, res) => {
+  const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^\/+/, '') || 'index.html';
+  if (path === '__stub.js') return res.writeHead(200, { 'content-type': 'text/javascript' }).end(stub);
+  try {
+    let body = await readFile(join(ui, path));
+    if (path === 'index.html') {
+      body = body.toString()
+        .replace('<script type="module"', '<script src="__stub.js"></script>\n<script type="module"')
+        .replace('</head>', '<style>body{width:360px;height:560px;margin:24px auto;outline:1px solid #8884}</style></head>');
+    }
+    res.writeHead(200, { 'content-type': TYPES[extname(path)] || 'application/octet-stream' }).end(body);
+  } catch {
+    res.writeHead(404).end();
+  }
+}).listen(5174, () => console.log('Preview at http://localhost:5174'));
