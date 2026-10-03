@@ -127,6 +127,31 @@ async fn repo_status(cwds: Vec<String>) -> Result<Vec<repos::RepoStatus>, String
     tauri::async_runtime::spawn_blocking(move || repos::status(&cwds)).await.map_err(|e| e.to_string())
 }
 
+/// Pulls (fast-forward only). Returns how many commits arrived.
+#[tauri::command]
+async fn repo_pull(path: String) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || repos::pull(std::path::Path::new(&path))).await.map_err(|e| e.to_string())?
+}
+
+/// Deletes the named old branches. Returns the names deleted.
+#[tauri::command]
+async fn repo_delete_branches(path: String, names: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || repos::delete_old_branches(std::path::Path::new(&path), &names)).await.map_err(|e| e.to_string())?
+}
+
+/// Installed terminal apps, in preference order.
+#[tauri::command]
+fn terminals() -> Vec<String> {
+    terminal::installed()
+}
+
+/// Opens the chosen terminal app in a folder.
+#[tauri::command]
+fn open_terminal(app: AppHandle, path: String) -> Result<(), String> {
+    let pick = app.state::<Prefs>().0.lock().ok().and_then(|p| p.terminal.clone());
+    terminal::open(pick.as_deref(), std::path::Path::new(&path))
+}
+
 /// Rewrites the recap with the person's own `claude`, only when they allowed it.
 #[tauri::command]
 async fn polish_recap(app: AppHandle, text: String) -> Result<String, String> {
@@ -263,7 +288,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, polish_recap])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, repo_pull, repo_delete_branches, terminals, open_terminal, polish_recap])
         .setup(|app| {
             let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
             let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");
