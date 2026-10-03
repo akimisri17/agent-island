@@ -80,15 +80,18 @@ pub fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// How `app` runs `program args…` in `dir`. Ghostty takes the program on its
+/// How `app` runs `program args…` in `dir`. Ghostty opens a new window (`-n`),
+/// not a tab, and takes the program on its
 /// command line; Terminal and iTerm run a .command script; Warp cannot run a
 /// script, so Terminal does it instead.
 pub fn command_launch(app: &str, dir: &Path, program: &Path, args: &[String]) -> Launch {
     let d = dir.to_string_lossy().into_owned();
     let p = program.to_string_lossy().into_owned();
     if cfg!(windows) {
-        let mut a = vec!["-d".to_string(), d, p];
-        a.extend(args.iter().cloned());
+        // wt treats `;` as a command separator; `\;` passes it literally.
+        let esc = |s: &str| s.replace(';', "\\;");
+        let mut a = vec!["-d".to_string(), esc(&d), esc(&p)];
+        a.extend(args.iter().map(|x| esc(x)));
         return Launch::Exec("wt".into(), a);
     }
     if app == "Ghostty" {
@@ -97,14 +100,14 @@ pub fn command_launch(app: &str, dir: &Path, program: &Path, args: &[String]) ->
         return Launch::Exec("open".into(), a);
     }
     let quoted: Vec<String> = std::iter::once(sh_quote(&p)).chain(args.iter().map(|a| sh_quote(a))).collect();
-    let body = format!("#!/bin/sh\ncd {} && exec {}\n", sh_quote(&d), quoted.join(" "));
+    let body = format!("#!/bin/sh\nrm -f \"$0\"\ncd {} && exec {}\n", sh_quote(&d), quoted.join(" "));
     let opener = if app == "iTerm" { "iTerm" } else { "Terminal" };
     Launch::Script { app: opener.into(), body }
 }
 
 /// Opens a new terminal tab in `dir` running `program args…`. `name` names
 /// the script file when one is needed (letters, digits and dashes only).
-pub fn open_command(pick: Option<&str>, dir: &Path, program: &Path, args: &[String], name: &str) -> Result<(), String> {
+pub fn open_command(pick: Option<&str>, dir: &Path, program: &Path, args: &[String], name: &str, script_dir: &Path) -> Result<(), String> {
     if !dir.is_absolute() || !dir.is_dir() {
         return Err("That folder no longer exists.".into());
     }
@@ -124,15 +127,28 @@ pub fn open_command(pick: Option<&str>, dir: &Path, program: &Path, args: &[Stri
             }
         }
         Launch::Script { app: opener, body } => {
-            let dir = std::env::temp_dir().join("agent-island");
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let script = dir.join(format!("{name}.command"));
-            std::fs::write(&script, body).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(script_dir).map_err(|e| e.to_string())?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+                std::fs::set_permissions(script_dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
             }
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+            let tmp = script_dir.join(format!("{name}.{}.{nanos}.tmp", std::process::id()));
+            let script = script_dir.join(format!("{name}.command"));
+            {
+                use std::io::Write;
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.mode(0o700);
+                }
+                let mut f = opts.open(&tmp).map_err(|e| e.to_string())?;
+                f.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
+            }
+            std::fs::rename(&tmp, &script).map_err(|e| e.to_string())?;
             let ok = Command::new("open").args(["-a", &opener]).arg(&script).status().map_err(|e| format!("Could not open {opener}: {e}"))?;
             if ok.success() { Ok(()) } else { Err(format!("Could not open {opener}.")) }
         }
@@ -177,6 +193,9 @@ mod tests {
     fn shell_quoting_survives_any_folder_name() {
         assert_eq!(sh_quote("/w/my shop"), "'/w/my shop'");
         assert_eq!(sh_quote("/w/it's"), r"'/w/it'\''s'");
+        assert_eq!(sh_quote("a\nb"), "'a\nb'");
+        assert_eq!(sh_quote("$x`y`"), "'$x`y`'");
+        assert_eq!(sh_quote("$HOME"), "'$HOME'");
     }
 
     #[test]
@@ -196,7 +215,7 @@ mod tests {
                 match command_launch(app, dir, prog, &args) {
                     Launch::Script { app: opener, body } => {
                         assert_eq!(opener, if app == "iTerm" { "iTerm" } else { "Terminal" }, "Warp can't run a script; Terminal does");
-                        assert_eq!(body, "#!/bin/sh\ncd '/w/my shop' && exec '/u/.local/bin/claude' '--resume' 'ab-12'\n");
+                        assert_eq!(body, "#!/bin/sh\nrm -f \"$0\"\ncd '/w/my shop' && exec '/u/.local/bin/claude' '--resume' 'ab-12'\n");
                     }
                     Launch::Exec(..) => panic!("{app} runs a .command script"),
                 }
@@ -207,6 +226,10 @@ mod tests {
                     assert_eq!(p, "wt");
                     assert_eq!(a, vec!["-d", "/w/my shop", "/u/.local/bin/claude", "--resume", "ab-12"]);
                 }
+                Launch::Script { .. } => panic!(),
+            }
+            match command_launch("Windows Terminal", Path::new("/w/a;b"), prog, &["x;y".to_string()]) {
+                Launch::Exec(_, a) => assert_eq!(a, vec!["-d", "/w/a\\;b", "/u/.local/bin/claude", "x\\;y"]),
                 Launch::Script { .. } => panic!(),
             }
         }

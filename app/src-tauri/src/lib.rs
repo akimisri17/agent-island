@@ -163,20 +163,23 @@ async fn cut_off(app: AppHandle) -> Result<Vec<cutoff::CutOff>, String> {
 /// Resumes a Claude session: jumps to it if it is still running, otherwise
 /// opens a terminal tab running `claude --resume <id>` in its folder.
 #[tauri::command]
-async fn resume_session(app: AppHandle, session_id: String, cwd: String) -> Result<(), String> {
+async fn resume_session(app: AppHandle, session_id: String) -> Result<(), String> {
     if session_id.is_empty() || session_id.len() > 64 || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("That is not a session id.".into());
     }
     let r = roots(&app)?;
     let pick = app.state::<Prefs>().0.lock().ok().and_then(|p| p.terminal.clone());
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let scripts = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("scripts");
     tauri::async_runtime::spawn_blocking(move || {
         let live = live::live_sessions(&r);
         if let Some(s) = live.iter().find(|s| s.session_id == session_id) {
             return live::jump(s);
         }
+        let list = cutoff::find(&r.claude, logs::now_ms());
+        let cwd = cutoff::cwd_of(&list, &session_id).ok_or("That session is no longer in the cut-off list.")?;
         let claude = recap::find_claude(&home).ok_or("Could not find the claude command.")?;
-        terminal::open_command(pick.as_deref(), std::path::Path::new(&cwd), &claude, &["--resume".to_string(), session_id.clone()], &format!("resume-{session_id}"))
+        terminal::open_command(pick.as_deref(), std::path::Path::new(&cwd), &claude, &["--resume".to_string(), session_id.clone()], &format!("resume-{session_id}"), &scripts)
     })
     .await
     .map_err(|e| e.to_string())?
