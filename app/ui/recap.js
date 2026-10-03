@@ -34,7 +34,7 @@ export function buildRecap({ sessions, commits = [], live = [], now = Date.now()
     if (p) p.commits.push(...repo.commits);
   }
   const projects = [...byProject.values()]
-    .filter((p) => p.ms > 0 || p.commits.length)
+    .filter((p) => p.ms >= 60_000 || p.commits.length) // under a minute is noise
     .sort((a, b) => b.ms - a.ms)
     .map((p) => ({
       project: p.project,
@@ -47,7 +47,7 @@ export function buildRecap({ sessions, commits = [], live = [], now = Date.now()
     }));
 
   const waiting = live
-    .filter((s) => s.state !== 'working')
+    .filter((s) => s.state === 'waiting' || s.state === 'approval')
     .sort((a, b) => a.since - b.since)
     .map((s) => ({ title: s.title || s.project || 'Untitled session', project: s.project, waited: waitedFor(now - s.since), approval: s.state === 'approval' }));
   const totalMs = projects.reduce((n, p) => n + p.ms, 0);

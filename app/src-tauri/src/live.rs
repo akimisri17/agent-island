@@ -23,6 +23,9 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// A tool call older than this with no result is probably waiting for approval.
 const APPROVAL_AFTER_MS: i64 = 20_000;
+/// Past this, an unanswered tool call or approval means the session stopped
+/// (interrupted, or left), not that it is asking for something now.
+const IDLE_AFTER_MS: i64 = 30 * 60_000;
 const TAIL_BYTES: u64 = 256 * 1024;
 /// Cursor chats untouched for longer than this are not "live".
 const CURSOR_LIVE_MS: i64 = 12 * 3_600_000;
@@ -33,6 +36,17 @@ pub enum State {
     Waiting,
     Approval,
     Working,
+    /// Stuck on a tool call or approval for over 30 minutes.
+    Idle,
+}
+
+/// Approval that has gone unanswered for a long time is Idle instead.
+fn settle(state: State, since: i64, now: i64) -> State {
+    if state == State::Approval && now - since > IDLE_AFTER_MS {
+        State::Idle
+    } else {
+        state
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -57,7 +71,7 @@ pub struct LiveSession {
 
 impl LiveSession {
     pub fn needs_you(&self) -> bool {
-        self.state != State::Working
+        matches!(self.state, State::Waiting | State::Approval)
     }
 }
 
@@ -106,6 +120,7 @@ fn resume_id(cmd: &[String]) -> Option<String> {
 }
 
 /// Apps that host agent sessions on Windows, matched by executable name.
+#[cfg_attr(not(windows), allow(dead_code))]
 const WINDOWS_HOSTS: [&str; 14] = [
     "windowsterminal.exe",
     "code.exe",
@@ -128,6 +143,7 @@ const EDITORS: [&str; 7] = ["Visual Studio Code", "Code", "Cursor", "Windsurf", 
 /// Index of the host in an ancestor chain (nearest first): the outermost
 /// known app. `claude.exe` only counts as a host above the agent itself, so
 /// the Claude desktop app is found but the agent binary is not.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn pick_windows_host(chain: &[String]) -> Option<usize> {
     chain.iter().rposition(|exe| WINDOWS_HOSTS.contains(&exe.to_ascii_lowercase().as_str()))
 }
@@ -263,6 +279,7 @@ fn cursor_sessions(db_path: &Path, bundle: &Path, now: i64) -> Vec<LiveSession> 
     for v in rows.filter_map(Result::ok).flatten() {
         let Ok(c) = serde_json::from_slice::<CursorChat>(&v) else { continue };
         let Some((state, since)) = cursor_chat_state(&c, now) else { continue };
+        let state = settle(state, since, now);
         let cwd = c
             .workspace_identifier
             .as_ref()
@@ -446,6 +463,7 @@ pub fn live_sessions(roots: &crate::logs::Roots) -> Vec<LiveSession> {
             _ => codex_state(&t),
         }
         .unwrap_or((State::Working, now));
+        let state = settle(state, since, now);
         out.push(LiveSession {
             agent: p.agent,
             session_id: log.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -621,6 +639,13 @@ mod tests {
         assert_eq!(claude_state(&log, NOW).unwrap().0, State::Approval);
         let ts = chrono::DateTime::parse_from_rfc3339("2026-09-21T13:08:00.000Z").unwrap().timestamp_millis();
         assert_eq!(claude_state(&log, ts + 1_000).unwrap().0, State::Working);
+    }
+
+    #[test]
+    fn long_unanswered_approval_is_idle() {
+        assert_eq!(settle(State::Approval, NOW - 31 * 60_000, NOW), State::Idle);
+        assert_eq!(settle(State::Approval, NOW - 5 * 60_000, NOW), State::Approval);
+        assert_eq!(settle(State::Waiting, NOW - 99 * 60 * 60_000, NOW), State::Waiting);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { projectOf, readJsonl, newSession, createTurnTracker, addModel, addResponse, addTool, basename } from './lines.mjs';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const NOT_HUMAN_PREFIXES = ['<local-command', '<task-notification', '[SYSTEM', '<system-reminder'];
+const NOT_HUMAN_PREFIXES = ['<local-command', '<task-notification', '[SYSTEM', '<system-reminder', 'This session is being continued from a previous conversation'];
 
 // Parses one Claude Code session log (~/.claude/projects/<dir>/<id>.jsonl).
 // Subagent logs live under <id>/subagents/ and only contribute tokens and tools.
@@ -64,6 +64,9 @@ export async function parseClaudeFile(path, { since, isSubagent = false } = {}) 
 function isHumanPrompt(d) {
   if (d.toolUseResult !== undefined || d.isMeta) return false;
   if (d.origin) return d.origin.kind === 'human';
+  // Programmatic runs (Agent SDK, `claude -p` from scripts and plugins such as
+  // claude-mem) are not a person typing.
+  if (typeof d.entrypoint === 'string' && d.entrypoint.startsWith('sdk')) return false;
   // Older logs have no origin field: fall back to the message shape.
   const content = d.message?.content;
   let text = null;

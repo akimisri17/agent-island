@@ -175,7 +175,13 @@ fn lines(path: &Path) -> impl Iterator<Item = String> {
 // ---------- Claude Code ----------
 
 const EDIT_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
-const NOT_HUMAN_PREFIXES: [&str; 4] = ["<local-command", "<task-notification", "[SYSTEM", "<system-reminder"];
+const NOT_HUMAN_PREFIXES: [&str; 5] = [
+    "<local-command",
+    "<task-notification",
+    "[SYSTEM",
+    "<system-reminder",
+    "This session is being continued from a previous conversation",
+];
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -192,6 +198,7 @@ struct CLine<'a> {
     is_meta: Option<bool>,
     tool_use_result: Option<serde::de::IgnoredAny>,
     origin: Option<Origin>,
+    entrypoint: Option<&'a str>,
     #[serde(borrow)]
     message: Option<CMsg<'a>>,
 }
@@ -330,6 +337,11 @@ fn is_human_prompt(d: &CLine) -> bool {
     }
     if let Some(o) = &d.origin {
         return o.kind.as_deref() == Some("human");
+    }
+    // Programmatic runs (Agent SDK, `claude -p` from scripts and plugins such
+    // as claude-mem) are not a person typing.
+    if d.entrypoint.is_some_and(|e| e.starts_with("sdk")) {
+        return false;
     }
     // Older logs have no origin field: fall back to the message shape.
     let Some(raw) = d.message.as_ref().and_then(|m| m.content) else { return false };
@@ -614,6 +626,12 @@ mod tests {
         assert_eq!(s.compactions, 1);
         assert_eq!(s.turns.len(), 2);
         assert_eq!(s.turns[0].end - s.turns[0].start, 3 * 60_000);
+    }
+
+    #[test]
+    fn sdk_prompts_are_not_human() {
+        let s = parse_claude(&fx("claude-sdk.jsonl"), SINCE, false);
+        assert_eq!(s.prompts.len(), 1);
     }
 
     #[test]

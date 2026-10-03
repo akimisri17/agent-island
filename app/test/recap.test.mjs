@@ -46,3 +46,19 @@ test('a quiet day', () => {
   assert.equal(r.next, null);
   assert.match(r.text, /0 min of agent work across 0 projects, 0 commits/);
 });
+
+test('idle sessions are not "waiting", and sub-minute projects are left out', () => {
+  const r = buildRecap({
+    now: NOW,
+    sessions: [
+      session({ project: 'real', turns: [{ start: 0, end: 5 * 60_000 }] }),
+      session({ project: 'blip', turns: [{ start: 0, end: 20_000 }] }),
+    ],
+    live: [
+      { state: 'idle', title: 'Stuck', since: NOW - 17 * H },
+      { state: 'waiting', title: 'Done', since: NOW - H },
+    ],
+  });
+  assert.deepEqual(r.projects.map((p) => p.project), ['real']);
+  assert.deepEqual(r.waiting.map((w) => w.title), ['Done']);
+});
