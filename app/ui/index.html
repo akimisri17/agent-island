@@ -36,7 +36,11 @@
     <div class="muted" id="today-sub">&nbsp;</div>
   </div>
   <button class="wait-link" id="today-wait" hidden></button>
-  <ul class="today" id="today-list"></ul>
+  <div class="today-scroll">
+    <ul class="today" id="today-list"></ul>
+    <div class="repos-head" id="repos-head" hidden>Repos</div>
+    <ul class="today repos" id="repos"></ul>
+  </div>
   <pre class="polished" id="polished" hidden></pre>
   <div class="actions">
     <button class="primary" id="copy-recap" disabled>Copy for standup</button>

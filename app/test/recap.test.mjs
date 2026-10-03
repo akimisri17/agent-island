@@ -79,3 +79,17 @@ test('standup text: sections without content are left out', () => {
   const r = buildRecap({ now: NOW, sessions: [session({ project: 'site', title: 'site', turns: [{ start: 0, end: H2 }] })] });
   assert.equal(r.text, 'In progress\n- site'); // no Done (no commits), no Next (nothing waiting); title equal to project dropped
 });
+
+test('repo card: facts, and commands to copy only when they are safe', async () => {
+  const { repoCard } = await import('../ui/recap.js');
+  const base = { project: 'shop', path: '/w/my shop', branch: 'main', detached: false, upstream: 'origin/main', ahead: 0, behind: 0, changes: 0, stashes: 0, worktrees: [], merged: [] };
+  assert.deepEqual(repoCard(base).facts, ['clean, up to date with last fetch']);
+  assert.equal(repoCard(base).attention, false);
+  const c = repoCard({ ...base, behind: 2, stashes: 1, merged: ['feat/a', 'fix/b'], worktrees: [{ path: '/w/x', branch: 'feat/c' }] });
+  assert.deepEqual(c.facts, ['2 to pull', '1 stash', '1 worktree', '2 merged branches to delete']);
+  assert.deepEqual(c.commands.map((x) => x.cmd), ["git -C '/w/my shop' pull --ff-only", "git -C '/w/my shop' branch -d feat/a fix/b"]);
+  assert.deepEqual(c.worktrees, ['feat/c']);
+  // Never suggest a pull over uncommitted work.
+  assert.deepEqual(repoCard({ ...base, behind: 1, changes: 3 }).commands, []);
+  assert.equal(repoCard({ ...base, branch: 'abc1234', detached: true, upstream: null }).branch, 'detached at abc1234');
+});
