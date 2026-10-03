@@ -44,7 +44,8 @@ Usage meters show how much is left right now. Agent Island tracks the sessions t
 Press **⌃⌥J** (Control-Option-J) from anywhere to jump to the session that has waited longest for you. To use a different shortcut, open Settings (the gear in the panel), click the hotkey, and press a new one. The number next to the menu-bar icon shows how many sessions are waiting.
 
 - **Finished:** the agent ended its turn and is waiting for your next message.
-- **Tool running or needs approval:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
+- **Approval or long tool:** a tool call has gone more than 20 seconds without a result. From the log alone, a long build and a pending approval look the same, so the label says both.
+- **Idle:** a tool call or approval has gone unanswered for more than 30 minutes, which means the session stopped rather than needing you now. Idle and working sessions sit in collapsed groups below the list and don't count toward the menu-bar number.
 - **Where the jump lands:**
   - macOS:
     - Terminal and iTerm: the exact tab.

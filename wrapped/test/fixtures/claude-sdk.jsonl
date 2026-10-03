@@ -1,0 +1,4 @@
+{"type":"user","entrypoint":"sdk-cli","message":{"role":"user","content":"Summarize the observations"},"timestamp":"2026-09-12T09:00:00.000Z","cwd":"/u/.claude-mem/observer-sessions"}
+{"type":"assistant","message":{"id":"x1","model":"claude-haiku-4-5","content":[],"usage":{"input_tokens":1,"output_tokens":5}},"timestamp":"2026-09-12T09:00:05.000Z"}
+{"type":"user","entrypoint":"cli","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context."},"timestamp":"2026-09-12T09:01:00.000Z"}
+{"type":"user","entrypoint":"cli","message":{"role":"user","content":"real question"},"timestamp":"2026-09-12T09:02:00.000Z"}

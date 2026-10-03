@@ -189,3 +189,8 @@ test('foreign SQLite: reading a WAL database creates no files next to it', async
   assert.equal(sessions.length, 2);
   assert.deepEqual(readdirSync(dir), ['state.vscdb']);
 });
+
+test('claude: SDK-driven prompts and continuation summaries are not a person typing', async () => {
+  const s = await parseClaudeFile(fx('claude-sdk.jsonl'), { since });
+  assert.equal(s.prompts.length, 1); // only "real question"
+});
