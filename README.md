@@ -129,10 +129,14 @@ Installers for macOS (Apple silicon and Intel) and Windows are built by [GitHub 
 
 **The builds are not signed yet.** The first time you open it:
 
-- **macOS:** right-click **Agent Island.app** → **Open** → **Open**. Or run:
-  ```bash
-  xattr -dr com.apple.quarantine "/Applications/Agent Island.app"
-  ```
+- **macOS:** drag **Agent Island** into Applications and open it. macOS says it *"could not verify"* the app: click **Done**, not Move to Bin. Then either:
+  - open **System Settings → Privacy & Security**, scroll to *"Agent Island" was blocked*, click **Open Anyway**, and open the app again; or
+  - run this once in Terminal, then open the app:
+    ```bash
+    xattr -dr com.apple.quarantine "/Applications/Agent Island.app"
+    ```
+
+  Right-click → Open no longer works for unsigned apps on recent macOS.
 - **Windows:** on the SmartScreen prompt, click **More info** → **Run anyway**.
 
 ### Try it without installing
