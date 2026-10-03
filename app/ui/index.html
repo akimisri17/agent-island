@@ -95,6 +95,10 @@
   </div>
   <p class="set-msg" id="hotkey-msg" aria-live="polite"></p>
   <label class="set-row">
+    <span><b>Terminal</b><small>Opened by the Terminal button on Repos.</small></span>
+    <select id="terminal" class="pick"></select>
+  </label>
+  <label class="set-row">
     <span><b>Limit notifications</b><small>Once per window when you get close to a limit, and when a Claude limit resets. <button class="link" id="test-notify">Send a test</button></small></span>
     <input type="checkbox" id="notify">
   </label>
@@ -106,6 +110,15 @@
   <p class="set-msg" id="polish-msg" aria-live="polite"></p>
 </section>
 
+<div class="dim" id="dim" hidden></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+  <b id="sheet-title"></b>
+  <div id="sheet-body"></div>
+  <div class="sheet-actions">
+    <button class="btn" id="sheet-cancel">Cancel</button>
+    <button class="btn primary" id="sheet-ok"></button>
+  </div>
+</div>
 <p class="note" id="note" hidden></p>
 
 <nav class="tabbar" role="tablist" aria-label="View" id="tabbar">
