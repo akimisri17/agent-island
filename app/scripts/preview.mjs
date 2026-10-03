@@ -1,12 +1,13 @@
 // Dev-only: serves app/ui in a browser with window.__TAURI__ stubbed, fed by
 // real data from the Rust examples (today's sessions and repo status). Never
 // shipped: the stub is injected by this server, not stored in ui/.
-//   npm run preview        -> http://localhost:5174
+//   npm run preview        -> http://localhost:5174 (PORT=… to change)
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+const PORT = Number(process.env.PORT) || 5174;
 
 const ui = fileURLToPath(new URL('../ui/', import.meta.url));
 const tauri = fileURLToPath(new URL('../src-tauri/', import.meta.url));
@@ -54,4 +55,4 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end();
   }
-}).listen(5174, '127.0.0.1', () => console.log('Preview at http://localhost:5174'));
+}).listen(PORT, '127.0.0.1', () => console.log(`Preview at http://localhost:${PORT}`));
