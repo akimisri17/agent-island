@@ -14,11 +14,13 @@ pub struct Settings {
     pub notify_limits: bool,
     /// Allow the daily recap to be rewritten by the person's own `claude -p`.
     pub recap_with_claude: bool,
+    /// Terminal app for "Terminal" buttons, e.g. "iTerm". None: first installed.
+    pub terminal: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { hotkey: DEFAULT_HOTKEY.into(), notify_limits: true, recap_with_claude: false }
+        Settings { hotkey: DEFAULT_HOTKEY.into(), notify_limits: true, recap_with_claude: false, terminal: None }
     }
 }
 
@@ -46,7 +48,7 @@ mod tests {
     fn round_trip_and_defaults() {
         let dir = std::env::temp_dir().join(format!("agent-island-settings-{}", std::process::id()));
         assert_eq!(load(&dir), Settings::default());
-        let s = Settings { hotkey: "ctrl+shift+KeyK".into(), notify_limits: false, recap_with_claude: true };
+        let s = Settings { hotkey: "ctrl+shift+KeyK".into(), notify_limits: false, recap_with_claude: true, terminal: Some("iTerm".into()) };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);
         // Unknown and missing fields are tolerated.

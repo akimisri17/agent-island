@@ -8,6 +8,7 @@ pub mod notify;
 pub mod recap;
 pub mod repos;
 pub mod settings;
+pub mod terminal;
 
 use tauri::{
     image::Image,
