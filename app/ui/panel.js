@@ -422,7 +422,7 @@ function renderToday() {
       const li = el('li', r.attention ? 'attention' : '');
       const head = el('div', 'p-head');
       head.append(el('span', 'p-name', r.name), el('span', 'p-branch', r.branch));
-      li.append(head, el('div', 'p-line', r.facts.join(' · ')));
+      li.append(head, el('div', 'r-facts', r.facts.join(' · ')));
       if (r.worktrees.length) li.append(el('div', 'p-line', `Worktrees: ${r.worktrees.join(', ')}`));
       if (r.commands.length) {
         const row = el('div', 'r-cmds');
