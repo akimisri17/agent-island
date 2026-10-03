@@ -200,7 +200,7 @@ pub(crate) struct CLine<'a> {
     is_meta: Option<bool>,
     tool_use_result: Option<serde::de::IgnoredAny>,
     origin: Option<Origin>,
-    entrypoint: Option<&'a str>,
+    pub(crate) entrypoint: Option<&'a str>,
     #[serde(borrow)]
     pub(crate) message: Option<CMsg<'a>>,
 }
@@ -221,7 +221,7 @@ struct Origin {
 #[derive(Deserialize)]
 pub(crate) struct CMsg<'a> {
     id: Option<String>,
-    model: Option<String>,
+    pub(crate) model: Option<String>,
     usage: Option<Usage>,
     #[serde(borrow)]
     pub(crate) content: Option<&'a RawValue>,
