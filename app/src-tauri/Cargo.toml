@@ -26,6 +26,9 @@ tauri-plugin-global-shortcut = "2"
 tokio = { version = "1", features = ["time"] }
 tauri-plugin-notification = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSWindow"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
