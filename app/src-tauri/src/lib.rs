@@ -272,6 +272,101 @@ async fn open_task_run(app: AppHandle, name: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+#[derive(serde::Serialize)]
+struct RecipeSheet {
+    recipes: Vec<recipes::Recipe>,
+    suggestions: Vec<recipes::Suggestion>,
+}
+
+/// Suggestions for every repository, cached for ten minutes (mining reads
+/// 30 days of logs).
+fn suggestions_for(r: &logs::Roots, repo: &str) -> Vec<recipes::Suggestion> {
+    type Cache = (i64, std::collections::HashMap<String, Vec<recipes::Suggestion>>);
+    static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+    let now = logs::now_ms();
+    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if c.as_ref().is_none_or(|(at, _)| now - at > 600_000) {
+        let root_of = |cwd: &str| repos::root_of(std::path::Path::new(cwd)).map(|p| p.to_string_lossy().into_owned());
+        *c = Some((now, recipes::mine(&r.claude, now - 30 * 86_400_000, &root_of)));
+    }
+    c.as_ref().and_then(|(_, m)| m.get(repo).cloned()).unwrap_or_default()
+}
+
+/// Serialises edits to recipes.json (load, change, save).
+static RECIPES_LOCK: Mutex<()> = Mutex::new(());
+
+fn recipe_sheet(app: &AppHandle, repo: &str) -> Result<RecipeSheet, String> {
+    let saved = recipes::load(&config_dir(app)?).remove(repo).unwrap_or_default();
+    let known: std::collections::HashSet<String> = saved.iter().map(|x| recipes::key(&x.prompt)).collect();
+    let suggestions = suggestions_for(&roots(app)?, repo).into_iter().filter(|s| !known.contains(&recipes::key(&s.text))).collect();
+    Ok(RecipeSheet { recipes: saved, suggestions })
+}
+
+/// A repository's recipes and suggestions.
+#[tauri::command]
+async fn recipes_for(app: AppHandle, path: String) -> Result<RecipeSheet, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repos::check_root(std::path::Path::new(&path))?;
+        recipe_sheet(&app, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Adds or edits a recipe; returns the repository's sheet.
+#[tauri::command]
+async fn save_recipe(app: AppHandle, path: String, id: Option<String>, name: String, prompt: String) -> Result<RecipeSheet, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repos::check_root(std::path::Path::new(&path))?;
+        let dir = config_dir(&app)?;
+        {
+            let _g = RECIPES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let mut s = recipes::load(&dir);
+            recipes::upsert(&mut s, &path, id.as_deref(), &name, &prompt)?;
+            recipes::save(&dir, &s).map_err(|e| e.to_string())?;
+        }
+        recipe_sheet(&app, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Deletes a recipe; returns the repository's sheet.
+#[tauri::command]
+async fn delete_recipe(app: AppHandle, path: String, id: String) -> Result<RecipeSheet, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repos::check_root(std::path::Path::new(&path))?;
+        let dir = config_dir(&app)?;
+        {
+            let _g = RECIPES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let mut s = recipes::load(&dir);
+            recipes::remove(&mut s, &path, &id);
+            recipes::save(&dir, &s).map_err(|e| e.to_string())?;
+        }
+        recipe_sheet(&app, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Starts a recipe: a new Claude session in a terminal tab, in the repository.
+#[tauri::command]
+async fn start_recipe(app: AppHandle, path: String, id: String) -> Result<(), String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let pick = app.state::<Prefs>().0.lock().ok().and_then(|p| p.terminal.clone());
+    let scripts = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("scripts");
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = std::path::Path::new(&path);
+        repos::check_root(repo)?;
+        let saved = recipes::load(&config_dir(&app)?).remove(&path).unwrap_or_default();
+        let r = saved.into_iter().find(|r| r.id == id).ok_or("That recipe no longer exists.")?;
+        let claude = recap::find_claude(&home).ok_or("Could not find the claude command.")?;
+        terminal::open_command(pick.as_deref(), repo, &claude, &[r.prompt], &script_name("recipe", &r.id), &scripts)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Rewrites the recap with the person's own `claude`, only when they allowed it.
 #[tauri::command]
 async fn polish_recap(app: AppHandle, text: String) -> Result<String, String> {
@@ -496,7 +591,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, repo_pull, repo_delete_branches, terminals, open_terminal, cut_off, resume_session, tasks_board, run_task, open_task_run, polish_recap])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, repo_pull, repo_delete_branches, terminals, open_terminal, cut_off, resume_session, tasks_board, run_task, open_task_run, recipes_for, save_recipe, delete_recipe, start_recipe, polish_recap])
         .setup(|app| {
             let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
             let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");
