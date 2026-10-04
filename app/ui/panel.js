@@ -6,13 +6,14 @@ import { buildRecap } from './recap.js';
 import { repoRow, sortRepos, pullSheet, branchSheet, resultLine } from './repos.js';
 import { icon, sprite } from './icons.js';
 import { cutoffSection } from './cutoff.js';
+import { taskView, tasksHaveProblems } from './tasks.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const STALE_MS = 5 * 60_000; // re-read logs when the panel opens after this long
-const TABS = ['waiting', 'today', 'repos', 'wrapped'];
-const TITLES = { waiting: 'Waiting', today: 'Today', repos: 'Repos', wrapped: 'Wrapped', settings: 'Settings' };
+const TABS = ['waiting', 'today', 'repos', 'tasks', 'wrapped'];
+const TITLES = { waiting: 'Waiting', today: 'Today', repos: 'Repos', tasks: 'Tasks', wrapped: 'Wrapped', settings: 'Settings' };
 const $ = (id) => document.getElementById(id);
 const cache = new Map(); // days -> { scan, at }: raw sessions, so filters need no re-read
 let days = 7;
@@ -22,7 +23,7 @@ let current = null; // { stats, meta } as shown, for the full report
 let view = 'waiting';
 let lastView = 'waiting';
 const updatedAt = {}; // view -> ms of its last successful load
-let prefs = { hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false };
+let prefs = { hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, notifyMissedTasks: true, recapWithClaude: false };
 const IS_MAC = /Mac/.test(navigator.platform);
 
 // Icons: one sprite, then fill every placeholder.
@@ -309,12 +310,14 @@ function setView(v) {
   }
   if (v === 'waiting') return loadLive(), loadLimits(), loadCutoff();
   if (v === 'today' || v === 'repos') return loadToday();
+  if (v === 'tasks') return loadTasks();
   return load();
 }
 
 function refresh() {
   if (view === 'waiting') return loadLive(), loadLimits(true), loadCutoff();
   if (view === 'today' || view === 'repos') return loadToday(true);
+  if (view === 'tasks') return loadTasks();
   if (view === 'wrapped') return load(true);
 }
 
@@ -747,11 +750,67 @@ $('polish').addEventListener('click', async () => {
   }
 });
 
+// --- Tasks ---
+
+let taskRows = [];
+let tasksSeq = 0;
+
+async function loadTasks() {
+  const seq = ++tasksSeq;
+  try {
+    const rows = await invoke('tasks_board');
+    if (seq !== tasksSeq) return;
+    taskRows = rows;
+    updatedAt.tasks = Date.now();
+  } catch (e) {
+    if (view === 'tasks') note(`Could not read scheduled tasks: ${e}`);
+    return;
+  }
+  $('tdot').hidden = !tasksHaveProblems(taskRows);
+  renderTasks();
+}
+
+function renderTasks() {
+  const now = Date.now();
+  $('tasks-empty').hidden = taskRows.length > 0;
+  $('tasks').replaceChildren(
+    ...taskRows.map((r) => {
+      const v = taskView(r, now);
+      const li = el('li', 'dotted');
+      const name = el('span', 'name');
+      name.append(el('span', v.dot ? `dot ${v.dot}` : 'dot'), el('span', '', v.name));
+      li.append(name, el('span', 'right num', v.right), el('span', 'line', v.line));
+      const marks = el('span', 'daymarks');
+      marks.setAttribute('aria-label', `Last 7 days: ${v.days.join(', ')}`);
+      for (const d of v.days) marks.append(el('i', d));
+      li.append(marks);
+      if (v.note) li.append(el('span', 'note-line', v.note));
+      if (v.actions.runNow || v.actions.lastRun) {
+        const box = el('div', 'row-actions');
+        if (v.actions.runNow) box.append(actionButton('Run now', 'play', 'btn', () => taskAction('run_task', r.name)));
+        if (v.actions.lastRun) box.append(actionButton('Last run', 'history', 'btn ghost', () => taskAction('open_task_run', r.name)));
+        li.append(box);
+      }
+      return li;
+    }),
+  );
+}
+
+async function taskAction(cmd, name) {
+  try {
+    await invoke(cmd, { name });
+    window.__TAURI__.window.getCurrentWindow().hide();
+  } catch (e) {
+    note(String(e));
+  }
+}
+
 // --- Settings ---
 
 async function showSettings() {
   $('hotkey').textContent = hotkeyLabel(prefs.hotkey);
   $('notify').checked = prefs.notifyLimits;
+  $('notify-tasks').checked = prefs.notifyMissedTasks;
   $('recap-claude').checked = prefs.recapWithClaude;
   const apps = await invoke('terminals').catch(() => []);
   const sel = $('terminal');
@@ -775,6 +834,7 @@ async function saveSettings(next) {
 }
 
 $('notify').addEventListener('change', (e) => saveSettings({ notifyLimits: e.target.checked }));
+$('notify-tasks').addEventListener('change', (e) => saveSettings({ notifyMissedTasks: e.target.checked }));
 $('test-notify').addEventListener('click', async (e) => {
   e.preventDefault();
   try {
@@ -814,6 +874,7 @@ $('hotkey').addEventListener('click', () => {
 
 listen('panel-shown', () => {
   loadLive(); // cheap: keeps the Waiting dot current on every tab
+  loadTasks(); // keeps the Tasks dot current; the backend caches for a minute
   if (view === 'waiting') loadLimits(), loadCutoff();
   if (view === 'wrapped') load();
   if (view === 'today' || view === 'repos') loadToday();

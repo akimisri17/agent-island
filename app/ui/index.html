@@ -66,6 +66,16 @@
   </div>
 </section>
 
+<section class="view" id="view-tasks" hidden>
+  <p class="sub">Scheduled Claude tasks · last 7 days</p>
+  <ul class="rows" id="tasks"></ul>
+  <div class="empty" id="tasks-empty" hidden>
+    <span data-icon="cal"></span>
+    <b>No scheduled tasks</b>
+    <span>Tasks you schedule in the Claude app show up here, with whether each one ran.</span>
+  </div>
+</section>
+
 <section class="view" id="view-wrapped" hidden>
   <div class="controls">
     <div class="seg" role="tablist" aria-label="Range">
@@ -108,6 +118,10 @@
   </label>
   <p class="set-msg" id="notify-msg" aria-live="polite"></p>
   <label class="set-row">
+    <span><b>Task notifications</b><small>When a scheduled task misses a run, fails or gets stuck.</small></span>
+    <input type="checkbox" id="notify-tasks">
+  </label>
+  <label class="set-row">
     <span><b>Polish recap with Claude</b><small>Lets Today send session titles, project names and file names to Claude through your own <code>claude</code> command. It uses your plan's usage.</small></span>
     <input type="checkbox" id="recap-claude">
   </label>
@@ -129,6 +143,7 @@
   <button role="tab" data-view="waiting" aria-selected="true"><span data-icon="clock"></span>Waiting<span class="tdot" id="wdot" hidden></span></button>
   <button role="tab" data-view="today" aria-selected="false"><span data-icon="sun"></span>Today</button>
   <button role="tab" data-view="repos" aria-selected="false"><span data-icon="branch"></span>Repos</button>
+  <button role="tab" data-view="tasks" aria-selected="false"><span data-icon="cal"></span>Tasks<span class="tdot failed" id="tdot" hidden></span></button>
   <button role="tab" data-view="wrapped" aria-selected="false"><span data-icon="chart"></span>Wrapped</button>
 </nav>
 </body>
