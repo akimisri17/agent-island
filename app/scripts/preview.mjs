@@ -54,6 +54,11 @@ const handlers = {
   save_recipe: ({ name, prompt }) => ({ recipes: [{ id: 'r1', name: 'Fresh start', prompt: 'Pull all repos to dev' }, { id: 'r2', name, prompt }], suggestions: [] }),
   delete_recipe: () => ({ recipes: [], suggestions: [] }),
   start_recipe: () => null,
+  approvals: () => [
+    { project: '/tmp/app', name: 'Applications', asked: 41, tools: [['Bash', 38], ['Edit', 3]], commands: [['shell script', 22], ['npm run', 12], ['docker compose', 4]], medianWaitMs: 360000, affirmations: 7, suggestions: ['Bash(npm run:*)', 'Bash(docker compose:*)'] },
+    { project: '/tmp/erp', name: 'erp-backend', asked: 18, tools: [['Edit', 12], ['Bash', 6]], commands: [['cargo test', 6]], medianWaitMs: 180000, affirmations: 0, suggestions: ['Bash(cargo test:*)'] },
+  ],
+  allow_rules: ({ rules }) => rules,
   test_notification: () => null,
   polish_recap: () => 'Done\\n- preview: polished text',
 };
