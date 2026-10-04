@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Island — know which coding agent is waiting on you</title>
-<meta name="description" content="A free, local menu-bar app for Claude Code, Codex, Cursor and Antigravity: which session is waiting on you, where you stand on usage limits, and what got done today. Nothing leaves your machine.">
+<meta name="description" content="A free, local menu-bar app for Claude Code, Codex, Cursor and Antigravity: which session is waiting on you, where you stand on usage limits, what got done today, and what your repositories and scheduled tasks need. Nothing leaves your machine.">
 <meta property="og:title" content="Agent Island">
 <meta property="og:description" content="Know which coding agent is waiting on you. Free, local, open source.">
 <meta property="og:image" content="media/share-card.png">
@@ -119,7 +119,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <div>
       <p class="eyebrow">Free · Open source · macOS &amp; Windows</p>
       <h1>Know which agent is <em>waiting on you.</em></h1>
-      <p class="lede">A menu-bar app for people who run Claude Code, Codex, Cursor and Antigravity all day. It shows which session needs you, where you stand against your usage limits, and what got done today. Nothing leaves your machine.</p>
+      <p class="lede">A menu-bar app for people who run Claude Code, Codex, Cursor and Antigravity all day. It shows which session needs you, where you stand against your usage limits, what got done today, and what your repositories and scheduled tasks need. Nothing leaves your machine.</p>
       <div class="cta">
         <a class="btn primary" href="#install">Download for macOS or Windows</a>
         <a class="btn" href="https://github.com/akimisri17/agent-island">View on GitHub</a>
@@ -127,15 +127,15 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       <p class="try">Or try the report without installing: <code>node wrapped/bin/agent-wrapped.mjs --demo</code></p>
     </div>
     <div class="stack">
-      <img src="media/panel-waiting.png" alt="Waiting tab: limits card and three sessions waiting on you, longest first" width="680" height="1040">
-      <img src="media/panel-today-dark.png" alt="Today tab in dark mode: agent time per project with commits" width="680" height="1040">
+      <img src="media/panel-waiting.png" alt="Waiting tab: limits, three sessions waiting on you, and two sessions cut off by the limit" width="720" height="1120">
+      <img src="media/panel-repos-dark.png" alt="Repos tab in dark mode: branch and status per repository, with Pull, Recipes and Terminal" width="720" height="1120">
     </div>
   </header>
 </main>
 
 <section id="features">
   <div class="wrap feature">
-    <div class="shot"><img src="media/panel-waiting.png" alt="Waiting tab with sessions sorted by longest wait" loading="lazy" width="680" height="1040"></div>
+    <div class="shot"><img src="media/panel-waiting.png" alt="Waiting tab with sessions sorted by longest wait, and sessions cut off by the limit with Resume" loading="lazy" width="720" height="1120"></div>
     <div>
       <p class="kicker">Waiting</p>
       <h2>One key to the session that needs you</h2>
@@ -144,6 +144,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
         <li><b>Finished</b>: the agent ended its turn and is waiting for your next message.</li>
         <li><b>Tool running or needs approval</b>: a tool call has gone more than 20 seconds without a result.</li>
         <li>Lands on the exact Terminal or iTerm tab, the right VS Code or Cursor window, or the Claude app.</li>
+        <li><b>Cut off by the limit</b>: after a Claude limit resets, the sessions it stopped come back with a Resume button.</li>
         <li>Choose your own shortcut in Settings.</li>
       </ul>
     </div>
@@ -152,7 +153,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 
 <section>
   <div class="wrap feature flip">
-    <div class="shot"><img src="media/panel-waiting-dark.png" alt="Limits card: past 7 of your 11 limit hits, Codex 72% used" loading="lazy" width="680" height="1040"></div>
+    <div class="shot"><img src="media/panel-waiting-dark.png" alt="Limits card in dark mode: past 2 of your 4 limit hits, Codex 38% used" loading="lazy" width="720" height="1120"></div>
     <div>
       <p class="kicker">Limits</p>
       <h2>Where you stand, without made-up numbers</h2>
@@ -169,14 +170,47 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 
 <section>
   <div class="wrap feature">
-    <div class="shot"><img src="media/panel-today.png" alt="Today tab: agent time per project, files, commits, and what's waiting" loading="lazy" width="680" height="1040"></div>
+    <div class="shot"><img src="media/panel-today.png" alt="Today tab: agent time per project, files, commits, and what's waiting" loading="lazy" width="720" height="1120"></div>
     <div>
       <p class="kicker">Today</p>
       <h2>Your standup, already written</h2>
       <p>What agents did today, project by project: time, which agents, session titles, files touched, and the day's git commits. Plus what is still waiting and which session to pick up next.</p>
       <ul>
-        <li><b>Copy for standup</b> puts it on your clipboard as plain text.</li>
+        <li><b>Copy standup</b> puts it on your clipboard as plain text.</li>
         <li><b>Polish with Claude</b> (optional, off by default) rewrites it through your own <code>claude</code> command.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap feature flip">
+    <div class="shot"><img src="media/panel-repos.png" alt="Repos tab: api has 5 commits to pull, selected with Pull, Recipes and Terminal" loading="lazy" width="720" height="1120"></div>
+    <div>
+      <p class="kicker">Repos</p>
+      <h2>What each repository needs, and the button for it</h2>
+      <p>One row for each repository your agents worked in today: the branch, and what you'd do next in plain words. The ones that need you come first.</p>
+      <ul>
+        <li><b>Pull</b> fast-forwards only, and shows the command before it runs.</li>
+        <li><b>Delete old branches</b> that were merged or deleted on the remote, after you confirm.</li>
+        <li><b>Terminal</b> opens your terminal app in that folder.</li>
+        <li><b>Recipes</b> keep your kick-off prompts per repository. Start opens a new Claude session with one.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap feature">
+    <div class="shot"><img src="media/panel-tasks.png" alt="Tasks tab: one task missed, one stopped, one fine, with seven days of dots" loading="lazy" width="720" height="1120"></div>
+    <div>
+      <p class="kicker">Tasks</p>
+      <h2>Scheduled tasks that quietly didn't run</h2>
+      <p>Your scheduled Claude tasks, with how the last seven days went. A red dot on the tab when one needs a look.</p>
+      <ul>
+        <li><b>Missed</b>: it hasn't run when it usually does.</li>
+        <li><b>Stopped</b>: it got stuck, often waiting for an approval nobody gave.</li>
+        <li><b>Run now</b> starts it; <b>Last run</b> opens what happened.</li>
       </ul>
     </div>
   </div>
@@ -191,6 +225,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       <p>Agent-hours, hours your agents waited on you, limit hits, peak parallel agents, models by maker, and where the tokens went. You get one of 19 personas with two badges, and a share card that holds numbers only.</p>
       <ul>
         <li>Filter by agent or by model maker: Anthropic, OpenAI, xAI, Google.</li>
+        <li>See where you approve the most, and allow routine build and test commands in one step.</li>
         <li>A full HTML report opens in your browser and stays on your machine.</li>
       </ul>
     </div>
@@ -223,7 +258,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <h2>It lives on your laptop</h2>
     <div class="grid">
       <div class="card"><h3>Nothing is sent</h3><p>No account, telemetry, analytics or server. The one exception is the optional recap polish, which uses your own <code>claude</code> command and only runs when you click it.</p></div>
-      <div class="card"><h3>Read-only</h3><p>It reads agent logs and databases without changing them, and it never writes files next to them. A test checks that.</p></div>
+      <div class="card"><h3>Read-only</h3><p>It reads agent logs and databases without changing them, and it never writes files next to them. A test checks that. Pull, branch cleanup and allow-rules run only when you confirm.</p></div>
       <div class="card"><h3>Not your prompts</h3><p>It counts messages, tools and time. Prompt text is never stored or shown.</p></div>
       <div class="card"><h3>No special permissions</h3><p>No screen recording, Accessibility or keychain access. Jumping to a Terminal tab asks once to control that app.</p></div>
       <div class="card"><h3>Light on battery</h3><p>Nothing animates. A quick check runs once a minute (about 35 ms), and the full read only happens when you open the panel.</p></div>
