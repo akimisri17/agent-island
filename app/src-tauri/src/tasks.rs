@@ -280,6 +280,36 @@ pub fn board(defs: &[TaskDef], runs: &[Run], now: i64) -> Vec<TaskRow> {
     rows
 }
 
+/// Remembers which task problems were already reported, so each new one is
+/// notified once. Problems present at the first look are only remembered.
+#[derive(Default)]
+pub struct TaskWatch {
+    started: bool,
+    told: std::collections::HashSet<(String, &'static str, i64)>,
+}
+
+impl TaskWatch {
+    /// (title, body) for each problem not seen before.
+    pub fn new_problems(&mut self, rows: &[TaskRow]) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for r in rows {
+            if !matches!(r.state, "missed" | "failed" | "stopped") {
+                continue;
+            }
+            let key = (r.name.clone(), r.state, r.last.as_ref().map_or(0, |l| l.start));
+            if self.told.insert(key) && self.started {
+                out.push(match r.state {
+                    "missed" => (format!("{} missed a run", r.name), "It hasn't run when it usually does.".to_string()),
+                    "failed" => (format!("{} failed", r.name), "Its last run ended with an error or a usage limit.".to_string()),
+                    _ => (format!("{} stopped mid-run", r.name), "It may be waiting for an approval in Claude.".to_string()),
+                });
+            }
+        }
+        self.started = true;
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +520,21 @@ mod tests {
         let b = board(&[def("eod")], &rs, local(0, 12));
         let c = b[0].cadence_ms.unwrap();
         assert!((23 * H..=25 * H).contains(&c), "about a day, got {c}");
+    }
+
+    #[test]
+    fn notifies_new_problems_once_and_not_what_was_wrong_at_start() {
+        let mut w = TaskWatch::default();
+        let row = |name: &str, state: &'static str, start: i64| TaskRow { name: name.into(), description: None, state, last: Some(run(name, start, Outcome::Done)), cadence_ms: None, days: vec![] };
+        // First look: remember, don't notify.
+        assert!(w.new_problems(&[row("a", "missed", 1)]).is_empty());
+        // Same problem again: nothing.
+        assert!(w.new_problems(&[row("a", "missed", 1)]).is_empty());
+        // A new problem on another task, and a fresh failure of "a": both once.
+        let notes = w.new_problems(&[row("a", "failed", 2), row("b", "stopped", 5), row("c", "ok", 5)]);
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0].0, "a failed");
+        assert_eq!(notes[1].0, "b stopped mid-run");
+        assert!(w.new_problems(&[row("a", "failed", 2), row("b", "stopped", 5)]).is_empty());
     }
 }
