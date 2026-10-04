@@ -110,6 +110,7 @@ fn run_of(path: &Path, mtime: i64, now: i64, fresh_ms: i64) -> Option<Run> {
     let mut task = None;
     let mut start = None;
     let mut cwd = None;
+    let mut decided = false;
     for line in head.lines() {
         let Ok(d) = serde_json::from_str::<Value>(line) else { continue };
         if let Some(t) = ts_of(&d) {
@@ -118,12 +119,13 @@ fn run_of(path: &Path, mtime: i64, now: i64, fresh_ms: i64) -> Option<Run> {
         if cwd.is_none() {
             cwd = d.get("cwd").and_then(Value::as_str).map(str::to_string);
         }
-        if task.is_none() {
+        if task.is_none() && !decided {
             let kind = d.get("type").and_then(Value::as_str);
             if matches!(kind, Some("queue-operation") | Some("user")) {
-                task = text_of(&d).and_then(task_name);
-                if task.is_none() && kind == Some("user") && d.get("origin").is_some() {
-                    return None; // the first prompt is not a scheduled task
+                if let Some(text) = text_of(&d) {
+                    decided = true;
+                    task = task_name(text);
+                    task.as_ref()?; // the first prompt is not a scheduled task
                 }
             }
         }
@@ -137,17 +139,25 @@ fn run_of(path: &Path, mtime: i64, now: i64, fresh_ms: i64) -> Option<Run> {
         let Some(t) = ts_of(&d) else { continue };
         end = end.max(t);
         let kind = d.get("type").and_then(Value::as_str);
-        let rejected = d.get("quotaLimits").and_then(|q| q.get("status")).and_then(Value::as_str) == Some("rejected");
-        if rejected || (kind == Some("system") && d.get("subtype").and_then(Value::as_str) == Some("api_error")) {
-            ended = Outcome::Failed;
-        } else if kind == Some("assistant") {
-            let m = d.get("message");
-            let synthetic = m.and_then(|m| m.get("model")).and_then(Value::as_str) == Some("<synthetic>");
-            if !synthetic {
-                ended = if m.and_then(|m| m.get("stop_reason")).and_then(Value::as_str) == Some("end_turn") { Outcome::Done } else { Outcome::Stopped };
+        let sub = d.get("subtype").and_then(Value::as_str);
+        match kind {
+            Some("system") if sub == Some("api_error") => ended = Outcome::Failed,
+            Some("assistant") => {
+                let m = d.get("message");
+                let synthetic = m.and_then(|m| m.get("model")).and_then(Value::as_str) == Some("<synthetic>");
+                let api_err = d.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true);
+                let rejected = d.get("quotaLimits").and_then(|q| q.get("status")).and_then(Value::as_str) == Some("rejected");
+                ended = if synthetic || api_err || rejected {
+                    Outcome::Failed
+                } else if m.and_then(|m| m.get("stop_reason")).and_then(Value::as_str) == Some("end_turn") {
+                    Outcome::Done
+                } else {
+                    Outcome::Stopped // tool_use / max_tokens / null: ended mid-step
+                };
             }
-        } else if kind == Some("user") {
-            ended = Outcome::Stopped;
+            // Injected meta prompts (hook context, reminders) aren't a new step.
+            Some("user") if d.get("isMeta").and_then(Value::as_bool) != Some(true) => ended = Outcome::Stopped,
+            _ => {}
         }
     }
     if ended != Outcome::Done && fresh_ms > 0 && now - mtime < fresh_ms {
@@ -196,7 +206,7 @@ pub struct TaskRow {
     pub last: Option<Run>,
     /// Median gap between starts, when there are at least two runs.
     pub cadence_ms: Option<i64>,
-    /// Last 7 local days, oldest first: "ran", "failed", "missed" or "none".
+    /// Last 7 local days, oldest first: "ran", "failed", "stopped", "missed" or "none".
     pub days: Vec<&'static str>,
 }
 
@@ -221,7 +231,13 @@ pub fn board(defs: &[TaskDef], runs: &[Run], now: i64) -> Vec<TaskRow> {
         .map(|name| {
             let mut mine: Vec<&Run> = runs.iter().filter(|r| r.task == name).collect();
             mine.sort_by_key(|r| r.start);
-            let mut gaps: Vec<i64> = mine.windows(2).map(|w| w[1].start - w[0].start).collect();
+            let mut kept: Vec<i64> = Vec::new();
+            for r in &mine {
+                if kept.last().is_none_or(|l| r.start - l > 3_600_000) {
+                    kept.push(r.start); // starts within an hour of the last are retries
+                }
+            }
+            let mut gaps: Vec<i64> = kept.windows(2).map(|w| w[1] - w[0]).collect();
             gaps.sort_unstable();
             let cadence_ms = (!gaps.is_empty()).then(|| gaps[gaps.len() / 2]);
             let last = mine.last().map(|r| (*r).clone());
@@ -242,8 +258,10 @@ pub fn board(defs: &[TaskDef], runs: &[Run], now: i64) -> Vec<TaskRow> {
                     let that: Vec<&&Run> = mine.iter().filter(|r| local_day(r.start) == day).collect();
                     if that.iter().any(|r| matches!(r.outcome, Outcome::Done | Outcome::Running)) {
                         "ran"
-                    } else if !that.is_empty() {
+                    } else if that.iter().any(|r| r.outcome == Outcome::Failed) {
                         "failed"
+                    } else if !that.is_empty() {
+                        "stopped"
                     } else if daily && first_day.is_some_and(|f| day >= f) && (day < today || state == "missed") {
                         "missed"
                     } else {
@@ -394,6 +412,7 @@ mod tests {
         assert_eq!(state("c"), "running");
         assert_eq!(state("d"), "never");
         assert_eq!(b.iter().find(|r| r.name == "a").unwrap().days[6], "failed");
+        assert_eq!(b.iter().find(|r| r.name == "b").unwrap().days[6], "stopped");
         // Problems first, then running, then fine, then never ran.
         assert_eq!(b.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c", "d"]);
     }
@@ -403,5 +422,73 @@ mod tests {
         let b = board(&[], &[run("old", local(0, 8), Outcome::Done)], local(0, 12));
         assert_eq!(b[0].name, "old");
         assert_eq!(b[0].description, None);
+    }
+
+    fn push(dir: &Path, id: &str, lines: &[String]) {
+        let mut f = std::fs::OpenOptions::new().append(true).open(dir.join(format!("{id}.jsonl"))).unwrap();
+        for l in lines {
+            writeln!(f, "{l}").unwrap();
+        }
+    }
+    fn outcome_of(tag: &str, ending: Vec<String>) -> Outcome {
+        let d = tmp(tag);
+        let t0 = 1_790_000_000_000;
+        run_log(&d.join("p"), "r", "x", t0, &ending);
+        let o = runs(&d, 0, t0 + H, 0)[0].outcome;
+        let _ = std::fs::remove_dir_all(&d);
+        o
+    }
+
+    #[test]
+    fn a_realistic_done_tail_is_done() {
+        let t = 1_790_000_100_000;
+        let o = outcome_of("tail-done", vec![
+            done(t),
+            format!(r#"{{"type":"attachment","timestamp":"{}"}}"#, ts(t + 1)),
+            format!(r#"{{"type":"system","subtype":"stop_hook_summary","timestamp":"{}"}}"#, ts(t + 2)),
+            format!(r#"{{"type":"user","isMeta":true,"timestamp":"{}","message":{{"role":"user","content":"reminder"}}}}"#, ts(t + 3)),
+            r#"{"type":"last-prompt","lastPrompt":"x"}"#.to_string(),
+            r#"{"type":"cost-state","cost":1}"#.to_string(),
+        ]);
+        assert_eq!(o, Outcome::Done);
+    }
+
+    #[test]
+    fn a_synthetic_api_error_after_tool_use_is_failed() {
+        let t = 1_790_000_100_000;
+        let err = format!(r#"{{"type":"assistant","isApiErrorMessage":true,"timestamp":"{}","message":{{"model":"<synthetic>","stop_reason":"stop_sequence","content":[]}}}}"#, ts(t + 5000));
+        assert_eq!(outcome_of("tail-err", vec![tool_use(t), err]), Outcome::Failed);
+    }
+
+    #[test]
+    fn a_tool_result_after_tool_use_is_stopped() {
+        let t = 1_790_000_100_000;
+        let res = format!(r#"{{"type":"user","timestamp":"{}","message":{{"role":"user","content":[{{"type":"tool_result"}}]}}}}"#, ts(t + 5000));
+        assert_eq!(outcome_of("tail-res", vec![tool_use(t), res]), Outcome::Stopped);
+    }
+
+    #[test]
+    fn a_later_mention_does_not_make_a_run() {
+        let d = tmp("mention");
+        let p = d.join("p");
+        std::fs::create_dir_all(&p).unwrap();
+        let t0 = 1_790_000_000_000;
+        std::fs::write(p.join("n.jsonl"), "").unwrap();
+        push(&p, "n", &[
+            format!(r#"{{"type":"user","timestamp":"{}","message":{{"role":"user","content":"hello"}}}}"#, ts(t0)),
+            format!(r#"{{"type":"user","timestamp":"{}","message":{{"role":"user","content":"<scheduled-task name=\"x\">"}}}}"#, ts(t0 + 1000)),
+        ]);
+        assert!(runs(&d, 0, t0 + H, 0).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn retries_do_not_shrink_the_cadence() {
+        let mut rs: Vec<Run> = (0..5).map(|d| run("eod", local(d, 8), Outcome::Done)).collect();
+        rs.push(run("eod", local(2, 8) + H / 6, Outcome::Done));
+        rs.push(run("eod", local(1, 8) + H / 6, Outcome::Done));
+        let b = board(&[def("eod")], &rs, local(0, 12));
+        let c = b[0].cadence_ms.unwrap();
+        assert!((23 * H..=25 * H).contains(&c), "about a day, got {c}");
     }
 }
