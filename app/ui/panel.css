@@ -202,6 +202,14 @@ code, .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: 
 .recipes .suggested .rname { font-weight: 500; color: var(--meta); }
 .sheet label.field { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--meta); }
 .sheet input, .sheet textarea { font: inherit; font-size: 12.5px; color: var(--ink); background: var(--fill); border: 0; border-radius: 7px; padding: 6px 8px; user-select: text; -webkit-user-select: text; }
-.sheet textarea { min-height: 110px; resize: vertical; }
+.sheet textarea { min-height: 110px; max-height: 40vh; resize: vertical; }
 .sheet .err { color: var(--ink); font-size: 11.5px; margin: 0; }
 .sheet .err::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--failed); margin-right: 6px; vertical-align: 1px; }
+
+.sheet .recipes li { font: inherit; padding: 8px 0; }
+.sheet .recipes .rname { color: var(--ink); }
+.sheet .recipes .suggested .rname { color: var(--meta); }
+.sheet .recipes .rline { color: var(--meta); }
+.sheet .recipes .btn span { color: inherit; }
+.sheet .recipes .btn { padding: 3px 9px; font-size: 11.5px; }
+.sheet .recipes .btn.ghost { background: none; color: var(--meta); padding: 3px 4px; }
