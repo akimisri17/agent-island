@@ -189,3 +189,19 @@ code, .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: 
 .daymarks i.stopped { background: var(--needs); }
 .daymarks i.missed { background: none; box-shadow: inset 0 0 0 1.4px var(--failed); }
 #tasks .note-line { grid-column: 1 / -1; padding-left: 14px; font-size: 11.5px; color: var(--meta); }
+
+.sheet-actions:has(#sheet-ok[hidden]) { grid-template-columns: 1fr; }
+
+/* Recipes */
+.recipes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; max-height: 260px; overflow-y: auto; }
+.recipes li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.recipes li:first-child { border-top: 0; }
+.recipes .rname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipes .rline { grid-column: 1 / -1; color: var(--meta); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipes .racts { display: flex; gap: 4px; }
+.recipes .suggested .rname { font-weight: 500; color: var(--meta); }
+.sheet label.field { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--meta); }
+.sheet input, .sheet textarea { font: inherit; font-size: 12.5px; color: var(--ink); background: var(--fill); border: 0; border-radius: 7px; padding: 6px 8px; user-select: text; -webkit-user-select: text; }
+.sheet textarea { min-height: 110px; resize: vertical; }
+.sheet .err { color: var(--ink); font-size: 11.5px; margin: 0; }
+.sheet .err::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--failed); margin-right: 6px; vertical-align: 1px; }
