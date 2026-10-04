@@ -7,7 +7,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const NEVER: [&str; 22] = [
+const NEVER: &[&str] = &[
+    "cd", "for", "do", "if", "then", "else", "elif", "while", "until", "done", "fi", "case", "esac", "select", "time", "git -C",
+    "cat", "tee", "echo", "printf", "python", "python3", "node", "bash", "sh", "zsh", "eval", "exec", "xargs", "env", "source", "mv", "cp",
     "rm", "sudo", "chmod", "chown", "dd", "mkfs", "kill", "pkill", "killall", "shutdown", "reboot", "curl", "wget", "ssh", "scp",
     "git push", "git reset", "git clean", "git checkout", "git rebase", "docker rm", "docker system",
 ];
@@ -37,11 +39,18 @@ pub struct ProjectFriction {
 
 /// First two words of a command (one for single-word commands).
 pub fn group(cmd: &str) -> String {
-    cmd.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+    let segs = perms::segments(cmd);
+    let seg = segs
+        .iter()
+        .map(|s| perms::strip_env(s))
+        .find(|s| !s.is_empty() && *s != "cd" && !s.starts_with("cd "))
+        .unwrap_or_else(|| segs.first().copied().unwrap_or(""));
+    seg.split_whitespace().take(2).collect::<Vec<_>>().join(" ").trim_end_matches(';').to_string()
 }
 
 fn never_suggest(g: &str) -> bool {
-    NEVER.iter().any(|n| g == *n || g.starts_with(&format!("{n} ")) || g.split_whitespace().next() == Some(n))
+    let first = g.split_whitespace().next().unwrap_or("");
+    first.starts_with(['.', '/', '<']) || g.contains(['=', '>']) || NEVER.iter().any(|n| g == *n || g.starts_with(&format!("{n} ")) || first == *n)
 }
 
 fn ts_of(d: &Value) -> Option<i64> {
@@ -265,6 +274,15 @@ mod tests {
     fn command_group_is_the_first_two_words() {
         assert_eq!(group("npm run test -- -x"), "npm run");
         assert_eq!(group("  make "), "make");
-        assert_eq!(group("cd app && cargo test"), "cd app");
+        assert_eq!(group("cd app && cargo test"), "cargo test");
+        assert_eq!(group("FOO=1 make build"), "make build");
+    }
+
+    #[test]
+    fn unsafe_groups_are_never_suggested() {
+        for g in ["cd /w", "cat >", ".venv/bin/python -", "python3 x.py", "DOC=1", "/bin/ls", "git push", "cat <<EOF"] {
+            assert!(never_suggest(g), "{g}");
+        }
+        assert!(!never_suggest("npm run"));
     }
 }
