@@ -13,6 +13,7 @@ name = "agent-island"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "objc2-app-kit",
  "rayon",
  "rusqlite",
  "serde",

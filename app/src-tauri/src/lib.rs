@@ -294,6 +294,20 @@ fn toggle_panel(app: &AppHandle) {
     show_panel(app);
 }
 
+/// A window normally lives on one Space, so the panel opened over a
+/// full-screen app would appear on the desktop instead. Joining all Spaces as
+/// a full-screen auxiliary window makes it open where the person is.
+#[cfg(target_os = "macos")]
+fn show_on_every_space(w: &tauri::WebviewWindow) {
+    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+    let Ok(ptr) = w.ns_window() else { return };
+    // SAFETY: Tauri returns the window's live NSWindow; setup runs on the main thread.
+    let win: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+    win.setCollectionBehavior(
+        win.collectionBehavior() | NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary,
+    );
+}
+
 fn show_panel(app: &AppHandle) {
     let Some(w) = app.get_webview_window(PANEL) else { return };
     // The menu bar is at the top on macOS; the taskbar is usually at the bottom on Windows.
@@ -333,6 +347,11 @@ pub fn run() {
             // Menu-bar only: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            // Show over full-screen apps and on every Space, like a menu.
+            #[cfg(target_os = "macos")]
+            if let Some(w) = app.get_webview_window(PANEL) {
+                show_on_every_space(&w);
+            }
 
             let report = MenuItem::with_id(app, "report", "Open full report", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Agent Island", true, Some("CmdOrCtrl+Q"))?;
