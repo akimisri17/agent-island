@@ -7,6 +7,7 @@ import { repoRow, sortRepos, pullSheet, branchSheet, resultLine } from './repos.
 import { icon, sprite } from './icons.js';
 import { cutoffSection } from './cutoff.js';
 import { recipeSheet, validateRecipe, suggestedName } from './recipes.js';
+import { frictionRows } from './approvals.js';
 import { taskView, tasksHaveProblems } from './tasks.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -491,6 +492,7 @@ function render() {
   const meta = { files: scan.files, bytes: scan.bytes, seconds: scan.seconds, filter: { ...filter } };
   current = { stats, meta };
   show({ stats, meta });
+  loadFriction();
 }
 
 function show({ stats: st, meta }) {
@@ -522,6 +524,81 @@ function show({ stats: st, meta }) {
   const tokens = st.totalTokens ? `${fmtNum(st.totalTokens)} tokens` : 'tokens not recorded';
   $('meta').textContent = `${fmtNum(st.sessions)} sessions · ${fmtNum(st.filesEdited)} files · ${tokens}`;
   spark(st);
+}
+
+let frictionSeq = 0;
+async function loadFriction() {
+  const seq = ++frictionSeq;
+  let list;
+  try {
+    list = await invoke('approvals', { days });
+  } catch {
+    return; // a nice-to-have; Wrapped still works
+  }
+  if (seq !== frictionSeq) return;
+  renderFriction(frictionRows(list));
+}
+
+function renderFriction(rows) {
+  $('friction').hidden = rows.length === 0;
+  $('friction-list').replaceChildren(
+    ...rows.map((r) => {
+      const li = el('li');
+      li.append(el('span', 'name', r.name), el('span', 'right num', r.right), el('span', 'line', r.line));
+      if (r.sub) li.append(el('span', 'sub-line', r.sub));
+      if (r.note) li.append(el('span', 'sub-line', r.note));
+      if (r.canAllow) {
+        const box = el('div', 'row-actions');
+        box.style.paddingLeft = '0';
+        box.append(actionButton('Allow these…', 'check', 'btn ghost', () => confirmAllow(r)));
+        li.append(box);
+      }
+      return li;
+    }),
+  );
+}
+
+function confirmAllow(r) {
+  const pick = el('div', 'rule-pick');
+  const boxes = r.suggestions.map((rule) => {
+    const label = el('label');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.value = rule;
+    label.append(cb, el('span', '', rule));
+    pick.append(label);
+    return cb;
+  });
+  const err = el('p', 'err');
+  err.hidden = true;
+  openSheet({
+    title: `Stop asking in ${r.name}?`,
+    body: [
+      el('p', '', 'These rules let Claude run matching commands in this project without asking. They are added to:'),
+      el('div', 'cmd', `${r.project}/.claude/settings.local.json`),
+      pick,
+      err,
+    ],
+    ok: 'Add rules',
+    run: async () => {
+      const rules = boxes.filter((b) => b.checked).map((b) => b.value);
+      if (!rules.length) {
+        err.textContent = 'Pick at least one rule.';
+        err.hidden = false;
+        return false;
+      }
+      try {
+        const added = await invoke('allow_rules', { project: r.project, rules, days });
+        note(added.length ? `Added ${added.length} rule${added.length === 1 ? '' : 's'} to ${r.name}.` : 'Those rules were already there.');
+        loadFriction();
+      } catch (e) {
+        err.textContent = String(e);
+        err.hidden = false;
+        return false;
+      }
+    },
+  });
 }
 
 async function load(force = false) {
