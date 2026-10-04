@@ -6,6 +6,7 @@ pub mod limits;
 pub mod live;
 pub mod logs;
 pub mod notify;
+pub mod perms;
 pub mod recap;
 pub mod recipes;
 pub mod repos;
