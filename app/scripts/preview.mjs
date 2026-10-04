@@ -47,6 +47,13 @@ const handlers = {
   },
   run_task: () => null,
   open_task_run: () => null,
+  recipes_for: () => ({
+    recipes: [{ id: 'r1', name: 'Fresh start', prompt: 'Pull all repos to dev, run migrations, start services, test end to end' }],
+    suggestions: [{ text: 'switch to main and pull, then raise a PR for the current branch', count: 9, last: Date.now() }],
+  }),
+  save_recipe: ({ name, prompt }) => ({ recipes: [{ id: 'r1', name: 'Fresh start', prompt: 'Pull all repos to dev' }, { id: 'r2', name, prompt }], suggestions: [] }),
+  delete_recipe: () => ({ recipes: [], suggestions: [] }),
+  start_recipe: () => null,
   test_notification: () => null,
   polish_recap: () => 'Done\\n- preview: polished text',
 };
