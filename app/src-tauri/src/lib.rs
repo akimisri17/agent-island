@@ -186,6 +186,79 @@ async fn resume_session(app: AppHandle, session_id: String) -> Result<(), String
     .map_err(|e| e.to_string())?
 }
 
+/// The Tasks board, cached for a minute (it reads the start and end of two
+/// weeks of logs).
+fn task_board(r: &logs::Roots, home: &std::path::Path) -> (Vec<tasks::TaskDef>, Vec<tasks::Run>, Vec<tasks::TaskRow>) {
+    type Board = (i64, Vec<tasks::TaskDef>, Vec<tasks::Run>, Vec<tasks::TaskRow>);
+    static CACHE: Mutex<Option<Board>> = Mutex::new(None);
+    let now = logs::now_ms();
+    if let Ok(c) = CACHE.lock() {
+        if let Some((at, d, runs, rows)) = c.as_ref() {
+            if now - at < 60_000 {
+                return (d.clone(), runs.clone(), rows.clone());
+            }
+        }
+    }
+    let defs = tasks::definitions(&home.join(".claude/scheduled-tasks"));
+    let runs = tasks::runs(&r.claude, now - 14 * 86_400_000, now, 5 * 60_000);
+    let rows = tasks::board(&defs, &runs, now);
+    if let Ok(mut c) = CACHE.lock() {
+        *c = Some((now, defs.clone(), runs.clone(), rows.clone()));
+    }
+    (defs, runs, rows)
+}
+
+#[tauri::command]
+async fn tasks_board(app: AppHandle) -> Result<Vec<tasks::TaskRow>, String> {
+    let r = roots(&app)?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || task_board(&r, &home).2).await.map_err(|e| e.to_string())
+}
+
+/// Starts a scheduled task now, in a terminal tab, with the prompt the
+/// desktop app sends, in the folder it last ran in.
+#[tauri::command]
+async fn run_task(app: AppHandle, name: String) -> Result<(), String> {
+    if name.is_empty() || name.len() > 80 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("That is not a task name.".into());
+    }
+    let r = roots(&app)?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let pick = app.state::<Prefs>().0.lock().ok().and_then(|p| p.terminal.clone());
+    let scripts = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("scripts");
+    tauri::async_runtime::spawn_blocking(move || {
+        let (defs, runs, _) = task_board(&r, &home);
+        let def = defs.iter().find(|d| d.name == name).ok_or("That task is no longer defined.")?;
+        let cwd = runs.iter().filter(|x| x.task == name).max_by_key(|x| x.start).and_then(|x| x.cwd.clone()).unwrap_or_else(|| home.to_string_lossy().into_owned());
+        let prompt = format!("<scheduled-task name=\"{}\" file=\"{}\">\n{}", def.name, def.file, def.body);
+        let claude = recap::find_claude(&home).ok_or("Could not find the claude command.")?;
+        terminal::open_command(pick.as_deref(), std::path::Path::new(&cwd), &claude, &[prompt], &format!("task-{}", name.replace('_', "-")), &scripts)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Opens a task's last run (`claude --resume`) in a terminal tab.
+#[tauri::command]
+async fn open_task_run(app: AppHandle, name: String) -> Result<(), String> {
+    if name.is_empty() || name.len() > 80 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("That is not a task name.".into());
+    }
+    let r = roots(&app)?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let pick = app.state::<Prefs>().0.lock().ok().and_then(|p| p.terminal.clone());
+    let scripts = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("scripts");
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, runs, _) = task_board(&r, &home);
+        let last = runs.iter().filter(|x| x.task == name).max_by_key(|x| x.start).ok_or("This task has no runs yet.")?;
+        let cwd = last.cwd.clone().ok_or("The last run has no folder.")?;
+        let claude = recap::find_claude(&home).ok_or("Could not find the claude command.")?;
+        terminal::open_command(pick.as_deref(), std::path::Path::new(&cwd), &claude, &["--resume".to_string(), last.session_id.clone()], &format!("resume-{}", last.session_id), &scripts)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Rewrites the recap with the person's own `claude`, only when they allowed it.
 #[tauri::command]
 async fn polish_recap(app: AppHandle, text: String) -> Result<String, String> {
@@ -212,6 +285,23 @@ fn test_notification(app: AppHandle) -> Result<(), String> {
         .body("Notifications work. You'll hear from it when you get close to a limit.")
         .show()
         .map_err(|e| e.to_string())
+}
+
+fn check_task_notifications(app: &AppHandle, watch: &Mutex<tasks::TaskWatch>) {
+    use tauri_plugin_notification::NotificationExt;
+    let on = app.state::<Prefs>().0.lock().map(|p| p.notify_missed_tasks).unwrap_or(false);
+    let (Ok(r), Ok(home)) = (roots(app), app.path().home_dir()) else { return };
+    let rows = task_board(&r, &home).2;
+    let Ok(mut w) = watch.lock() else { return };
+    // Always look, so problems that existed while notifications were off
+    // are not announced later as new.
+    let notes = w.new_problems(&rows);
+    if !on {
+        return;
+    }
+    for (title, body) in notes {
+        let _ = app.notification().builder().title(&title).body(&body).show();
+    }
 }
 
 /// Shows any limit notifications that are due. Called every 5 minutes.
@@ -393,7 +483,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, repo_pull, repo_delete_branches, terminals, open_terminal, cut_off, resume_session, polish_recap])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, repo_pull, repo_delete_branches, terminals, open_terminal, cut_off, resume_session, tasks_board, run_task, open_task_run, polish_recap])
         .setup(|app| {
             let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
             let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");
@@ -442,6 +532,7 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let notifier = std::sync::Arc::new(Mutex::new(notify::Notifier::default()));
+                let task_watch = std::sync::Arc::new(Mutex::new(tasks::TaskWatch::default()));
                 for tick in 0u64.. {
                     if let Ok(r) = roots(&handle) {
                         let n = tauri::async_runtime::spawn_blocking(move || live::live_sessions(&r).iter().filter(|s| s.needs_you()).count())
@@ -452,6 +543,8 @@ pub fn run() {
                     if tick % 5 == 0 {
                         let (h, n) = (handle.clone(), notifier.clone());
                         let _ = tauri::async_runtime::spawn_blocking(move || check_limit_notifications(&h, &n)).await;
+                        let (h, w) = (handle.clone(), task_watch.clone());
+                        let _ = tauri::async_runtime::spawn_blocking(move || check_task_notifications(&h, &w)).await;
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 }
