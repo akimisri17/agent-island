@@ -213,3 +213,9 @@ code, .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: 
 .sheet .recipes .btn span { color: inherit; }
 .sheet .recipes .btn { padding: 3px 9px; font-size: 11.5px; }
 .sheet .recipes .btn.ghost { background: none; color: var(--meta); padding: 3px 4px; }
+
+/* Wrapped: approvals */
+#friction-list .sub-line { grid-column: 1 / -1; color: var(--meta); font-size: 11.5px; }
+.rule-pick { display: flex; flex-direction: column; gap: 6px; }
+.rule-pick label { display: flex; align-items: center; gap: 8px; font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); }
+.rule-pick input { accent-color: var(--primary); }
