@@ -6,6 +6,7 @@ import { buildRecap } from './recap.js';
 import { repoRow, sortRepos, pullSheet, branchSheet, resultLine } from './repos.js';
 import { icon, sprite } from './icons.js';
 import { cutoffSection } from './cutoff.js';
+import { recipeSheet, validateRecipe, suggestedName } from './recipes.js';
 import { taskView, tasksHaveProblems } from './tasks.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -339,17 +340,23 @@ let sheetRun = null;
 let sheetBusy = false;
 let sheetToken = null;
 let sheetOpener = null;
+// `ok` null: a list with only a Close button. `run` may return false to keep
+// the sheet open (e.g. a form that failed validation).
+let sheetOk = '';
 function openSheet({ title, body, ok, run }) {
   closeMenu();
   sheetOpener = document.activeElement;
   sheetToken = {};
+  sheetOk = ok || '';
   $('sheet-title').textContent = title;
   $('sheet-body').replaceChildren(...body);
-  $('sheet-ok').textContent = ok;
+  $('sheet-ok').hidden = !ok;
+  $('sheet-ok').textContent = sheetOk;
   $('sheet-ok').disabled = false;
-  sheetRun = run;
+  $('sheet-cancel').textContent = ok ? 'Cancel' : 'Close';
+  sheetRun = run || null;
   $('dim').hidden = $('sheet').hidden = false;
-  $('sheet-ok').focus();
+  (ok ? $('sheet-ok') : $('sheet').querySelector('input, textarea, button')).focus();
 }
 function closeSheet() {
   $('dim').hidden = $('sheet').hidden = true;
@@ -370,11 +377,17 @@ $('sheet-ok').addEventListener('click', async () => {
   sheetBusy = true;
   $('sheet-ok').disabled = true;
   $('sheet-ok').textContent = 'Working…';
+  let keep = false;
   try {
-    await run();
+    keep = (await run()) === false;
   } finally {
     sheetBusy = false;
-    if (sheetToken === token) closeSheet();
+    if (sheetToken === token) {
+      if (keep) {
+        $('sheet-ok').disabled = false;
+        $('sheet-ok').textContent = sheetOk;
+      } else closeSheet();
+    }
   }
 });
 
@@ -659,6 +672,7 @@ function repoActions(r) {
   const box = el('div', 'row-actions');
   if (r.canPull) box.append(actionButton('Pull', 'down', 'btn', () => confirmPull(r)));
   if (r.oldBranches.length) box.append(actionButton(`Delete ${r.oldBranches.length} old`, 'trash', 'btn', () => confirmDelete(r)));
+  box.append(actionButton('Recipes', 'book', 'btn ghost', () => openRecipes(r)));
   box.append(actionButton('Terminal', 'term', 'btn ghost', () => openTerminal(r)));
   return box;
 }
@@ -718,6 +732,113 @@ async function openTerminal(r) {
   } catch (e) {
     note(String(e));
   }
+}
+
+// --- Recipes ---
+
+async function openRecipes(r) {
+  let data;
+  try {
+    data = await invoke('recipes_for', { path: r.path });
+  } catch (e) {
+    return note(String(e));
+  }
+  showRecipes(r, data);
+}
+
+function showRecipes(r, data) {
+  const s = recipeSheet(data);
+  const list = el('ul', 'recipes');
+  for (const x of s.recipes) {
+    const li = el('li');
+    li.append(el('span', 'rname', x.name));
+    const acts = el('span', 'racts');
+    acts.append(
+      actionButton('Start', 'play', 'btn', async () => {
+        try {
+          await invoke('start_recipe', { path: r.path, id: x.id });
+          closeSheet();
+          window.__TAURI__.window.getCurrentWindow().hide();
+        } catch (e) {
+          note(String(e));
+        }
+      }),
+      actionButton('Copy', 'copy', 'btn ghost', async (ev) => {
+        const label = ev.currentTarget.querySelector('span');
+        try {
+          await navigator.clipboard.writeText(x.prompt);
+          label.textContent = 'Copied';
+        } catch {
+          label.textContent = 'Copy failed';
+        }
+        setTimeout(() => (label.textContent = 'Copy'), 1500);
+      }),
+      actionButton('Edit', 'pencil', 'btn ghost', () => editRecipe(r, x)),
+    );
+    li.append(acts, el('span', 'rline', x.preview));
+    list.append(li);
+  }
+  for (const x of s.suggestions) {
+    const li = el('li', 'suggested');
+    li.append(el('span', 'rname', x.line));
+    const acts = el('span', 'racts');
+    acts.append(actionButton('Save', 'plus', 'btn ghost', () => editRecipe(r, { id: null, name: suggestedName(x.text), prompt: x.text })));
+    li.append(acts, el('span', 'rline', `“${x.preview}”`));
+    list.append(li);
+  }
+  const body = [];
+  if (s.empty) body.push(el('p', '', 'No recipes yet. Save the prompts you start sessions with here, then start them with one click.'));
+  else body.push(list);
+  body.push(actionButton('New recipe', 'plus', 'btn ghost', () => editRecipe(r, { id: null, name: '', prompt: '' })));
+  openSheet({ title: `Recipes · ${r.name}`, body, ok: null });
+}
+
+function editRecipe(r, x) {
+  const name = el('input');
+  name.value = x.name;
+  name.maxLength = 60;
+  name.placeholder = 'Fresh start';
+  const prompt = el('textarea');
+  prompt.value = x.prompt;
+  prompt.placeholder = 'Pull all repos to dev, run migrations, start services, test end to end';
+  const nameField = el('label', 'field', 'Name');
+  nameField.append(name);
+  const promptField = el('label', 'field', 'Prompt to start with');
+  promptField.append(prompt);
+  const err = el('p', 'err');
+  err.hidden = true;
+  const body = [nameField, promptField, err];
+  if (x.id) {
+    body.push(actionButton('Delete recipe', 'trash', 'btn ghost', async () => {
+      try {
+        showRecipes(r, await invoke('delete_recipe', { path: r.path, id: x.id }));
+      } catch (e) {
+        note(String(e));
+      }
+    }));
+  }
+  openSheet({
+    title: x.id ? 'Edit recipe' : 'New recipe',
+    body,
+    ok: 'Save',
+    run: async () => {
+      const problem = validateRecipe({ name: name.value, prompt: prompt.value });
+      if (problem) {
+        err.textContent = problem;
+        err.hidden = false;
+        return false;
+      }
+      try {
+        const data = await invoke('save_recipe', { path: r.path, id: x.id, name: name.value, prompt: prompt.value });
+        // Back to the list once this sheet closes.
+        setTimeout(() => showRecipes(r, data), 0);
+      } catch (e) {
+        err.textContent = String(e);
+        err.hidden = false;
+        return false;
+      }
+    },
+  });
 }
 
 $('copy-recap').addEventListener('click', async () => {
