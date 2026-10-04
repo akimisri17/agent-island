@@ -186,13 +186,25 @@ async fn resume_session(app: AppHandle, session_id: String) -> Result<(), String
     .map_err(|e| e.to_string())?
 }
 
+type Board = (i64, Vec<tasks::TaskDef>, Vec<tasks::Run>, Vec<tasks::TaskRow>);
+static TASK_CACHE: Mutex<Option<Board>> = Mutex::new(None);
+
+fn clear_task_board() {
+    *TASK_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Script name from a task name: anything but letters and digits becomes a dash.
+fn script_name(prefix: &str, name: &str) -> String {
+    let s: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    format!("{prefix}-{s}")
+}
+
 /// The Tasks board, cached for a minute (it reads the start and end of two
 /// weeks of logs).
 fn task_board(r: &logs::Roots, home: &std::path::Path) -> (Vec<tasks::TaskDef>, Vec<tasks::Run>, Vec<tasks::TaskRow>) {
-    type Board = (i64, Vec<tasks::TaskDef>, Vec<tasks::Run>, Vec<tasks::TaskRow>);
-    static CACHE: Mutex<Option<Board>> = Mutex::new(None);
     let now = logs::now_ms();
-    if let Ok(c) = CACHE.lock() {
+    {
+        let c = TASK_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, d, runs, rows)) = c.as_ref() {
             if now - at < 60_000 {
                 return (d.clone(), runs.clone(), rows.clone());
@@ -202,9 +214,7 @@ fn task_board(r: &logs::Roots, home: &std::path::Path) -> (Vec<tasks::TaskDef>, 
     let defs = tasks::definitions(&home.join(".claude/scheduled-tasks"));
     let runs = tasks::runs(&r.claude, now - 14 * 86_400_000, now, 5 * 60_000);
     let rows = tasks::board(&defs, &runs, now);
-    if let Ok(mut c) = CACHE.lock() {
-        *c = Some((now, defs.clone(), runs.clone(), rows.clone()));
-    }
+    *TASK_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((now, defs.clone(), runs.clone(), rows.clone()));
     (defs, runs, rows)
 }
 
@@ -219,7 +229,7 @@ async fn tasks_board(app: AppHandle) -> Result<Vec<tasks::TaskRow>, String> {
 /// desktop app sends, in the folder it last ran in.
 #[tauri::command]
 async fn run_task(app: AppHandle, name: String) -> Result<(), String> {
-    if name.is_empty() || name.len() > 80 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if name.is_empty() || name.len() > 80 {
         return Err("That is not a task name.".into());
     }
     let r = roots(&app)?;
@@ -229,10 +239,12 @@ async fn run_task(app: AppHandle, name: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let (defs, runs, _) = task_board(&r, &home);
         let def = defs.iter().find(|d| d.name == name).ok_or("That task is no longer defined.")?;
-        let cwd = runs.iter().filter(|x| x.task == name).max_by_key(|x| x.start).and_then(|x| x.cwd.clone()).unwrap_or_else(|| home.to_string_lossy().into_owned());
+        let cwd = runs.iter().filter(|x| x.task == name).max_by_key(|x| x.start).and_then(|x| x.cwd.clone()).filter(|c| std::path::Path::new(c).is_dir()).unwrap_or_else(|| home.to_string_lossy().into_owned());
         let prompt = format!("<scheduled-task name=\"{}\" file=\"{}\">\n{}", def.name, def.file, def.body);
         let claude = recap::find_claude(&home).ok_or("Could not find the claude command.")?;
-        terminal::open_command(pick.as_deref(), std::path::Path::new(&cwd), &claude, &[prompt], &format!("task-{}", name.replace('_', "-")), &scripts)
+        terminal::open_command(pick.as_deref(), std::path::Path::new(&cwd), &claude, &[prompt], &script_name("task", &name), &scripts)?;
+        clear_task_board();
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -241,7 +253,7 @@ async fn run_task(app: AppHandle, name: String) -> Result<(), String> {
 /// Opens a task's last run (`claude --resume`) in a terminal tab.
 #[tauri::command]
 async fn open_task_run(app: AppHandle, name: String) -> Result<(), String> {
-    if name.is_empty() || name.len() > 80 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if name.is_empty() || name.len() > 80 {
         return Err("That is not a task name.".into());
     }
     let r = roots(&app)?;
@@ -292,7 +304,7 @@ fn check_task_notifications(app: &AppHandle, watch: &Mutex<tasks::TaskWatch>) {
     let on = app.state::<Prefs>().0.lock().map(|p| p.notify_missed_tasks).unwrap_or(false);
     let (Ok(r), Ok(home)) = (roots(app), app.path().home_dir()) else { return };
     let rows = task_board(&r, &home).2;
-    let Ok(mut w) = watch.lock() else { return };
+    let mut w = watch.lock().unwrap_or_else(|e| e.into_inner());
     // Always look, so problems that existed while notifications were off
     // are not announced later as new.
     let notes = w.new_problems(&rows);
@@ -561,4 +573,14 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Agent Island");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::script_name;
+
+    #[test]
+    fn script_names_are_safe() {
+        assert_eq!(script_name("task", "Daily Report v1.2"), "task-Daily-Report-v1-2");
+    }
 }
