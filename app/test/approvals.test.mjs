@@ -44,3 +44,8 @@ test('noisy command groups are dropped; falls back to tools when none remain', (
   const [r2] = frictionRows([p({ commands: [['echo "---', 5], ['a`b', 2]] })]);
   assert.equal(r2.line, 'Bash, Edit · 6m median wait');
 });
+
+test('keeps a plain group, drops one containing *', () => {
+  const [r] = frictionRows([p({ commands: [['npm run', 4], ['rm -rf *', 3]] })]);
+  assert.equal(r.line, 'npm run · 6m median wait');
+});

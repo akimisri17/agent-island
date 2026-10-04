@@ -492,7 +492,6 @@ function render() {
   const meta = { files: scan.files, bytes: scan.bytes, seconds: scan.seconds, filter: { ...filter } };
   current = { stats, meta };
   show({ stats, meta });
-  loadFriction();
 }
 
 function show({ stats: st, meta }) {
@@ -533,7 +532,9 @@ async function loadFriction() {
   try {
     list = await invoke('approvals', { days });
   } catch {
-    return; // a nice-to-have; Wrapped still works
+    // a nice-to-have; Wrapped still works. Hide rather than show the wrong range.
+    if (seq === frictionSeq) renderFriction([]);
+    return;
   }
   if (seq !== frictionSeq) return;
   renderFriction(frictionRows(list));
@@ -549,7 +550,6 @@ function renderFriction(rows) {
       if (r.note) li.append(el('span', 'sub-line', r.note));
       if (r.canAllow) {
         const box = el('div', 'row-actions');
-        box.style.paddingLeft = '0';
         box.append(actionButton('Allow these…', 'check', 'btn ghost', () => confirmAllow(r)));
         li.append(box);
       }
@@ -559,6 +559,7 @@ function renderFriction(rows) {
 }
 
 function confirmAllow(r) {
+  const d = days;
   const pick = el('div', 'rule-pick');
   const boxes = r.suggestions.map((rule) => {
     const label = el('label');
@@ -589,7 +590,7 @@ function confirmAllow(r) {
         return false;
       }
       try {
-        const added = await invoke('allow_rules', { project: r.project, rules, days });
+        const added = await invoke('allow_rules', { project: r.project, rules, days: d });
         note(added.length ? `Added ${added.length} rule${added.length === 1 ? '' : 's'} to ${r.name}.` : 'Those rules were already there.');
         loadFriction();
       } catch (e) {
@@ -601,9 +602,13 @@ function confirmAllow(r) {
   });
 }
 
-async function load(force = false) {
+async function load(force = false, friction = true) {
   const hit = cache.get(days);
-  if (hit && !force && Date.now() - hit.at < STALE_MS) return render();
+  if (hit && !force && Date.now() - hit.at < STALE_MS) {
+    render();
+    if (friction) loadFriction();
+    return;
+  }
   if (hit) render();
   if (busy) return;
   busy = true;
@@ -612,6 +617,7 @@ async function load(force = false) {
     cache.set(days, { scan, at: Date.now() });
     updatedAt.wrapped = Date.now();
     render();
+    if (friction) loadFriction();
   } catch (e) {
     note(`Could not read logs: ${e}`);
   } finally {
@@ -633,7 +639,9 @@ for (const b of document.querySelectorAll('.seg button')) {
   b.addEventListener('click', () => {
     days = Number(b.dataset.days);
     for (const o of document.querySelectorAll('.seg button')) o.setAttribute('aria-selected', String(o === b));
-    load();
+    renderFriction([]);
+    loadFriction();
+    load(false, false);
   });
 }
 for (const key of ['agent', 'maker']) {
