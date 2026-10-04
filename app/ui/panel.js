@@ -343,9 +343,11 @@ let sheetOpener = null;
 // `ok` null: a list with only a Close button. `run` may return false to keep
 // the sheet open (e.g. a form that failed validation).
 let sheetOk = '';
-function openSheet({ title, body, ok, run }) {
+let sheetCancel = null;
+function openSheet({ title, body, ok, run, onCancel }) {
   closeMenu();
-  sheetOpener = document.activeElement;
+  if ($('sheet').hidden) sheetOpener = document.activeElement;
+  sheetCancel = onCancel || null;
   sheetToken = {};
   sheetOk = ok || '';
   $('sheet-title').textContent = title;
@@ -356,17 +358,23 @@ function openSheet({ title, body, ok, run }) {
   $('sheet-cancel').textContent = ok ? 'Cancel' : 'Close';
   sheetRun = run || null;
   $('dim').hidden = $('sheet').hidden = false;
-  (ok ? $('sheet-ok') : $('sheet').querySelector('input, textarea, button')).focus();
+  const field = $('sheet-body').querySelector('input, textarea');
+  (field || (ok ? $('sheet-ok') : $('sheet').querySelector('button'))).focus();
 }
 function closeSheet() {
   $('dim').hidden = $('sheet').hidden = true;
   sheetRun = null;
+  sheetCancel = null;
   sheetToken = null;
   const back = sheetOpener && document.contains(sheetOpener) ? sheetOpener : document.querySelector('#repos li.selected') || document.querySelector('#repos li');
   sheetOpener = null;
   if (back && back.focus) back.focus();
 }
-const closeIfIdle = () => { if (!sheetBusy) closeSheet(); };
+const closeIfIdle = () => {
+  if (sheetBusy) return;
+  if (sheetCancel) sheetCancel();
+  else closeSheet();
+};
 $('sheet-cancel').addEventListener('click', closeIfIdle);
 $('dim').addEventListener('click', closeIfIdle);
 $('sheet-ok').addEventListener('click', async () => {
@@ -414,7 +422,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key === ',') return e.preventDefault(), setView('settings');
   if (mod && e.key === 'q') return e.preventDefault(), invoke('quit');
   if (e.key === 'Escape') {
-    if (!$('sheet').hidden) return sheetBusy ? undefined : closeSheet();
+    if (!$('sheet').hidden) return closeIfIdle();
     if (!$('menu').hidden) return closeMenu();
     if (view === 'settings') return setView(lastView);
     return window.__TAURI__.window.getCurrentWindow().hide();
@@ -754,13 +762,22 @@ function showRecipes(r, data) {
     li.append(el('span', 'rname', x.name));
     const acts = el('span', 'racts');
     acts.append(
-      actionButton('Start', 'play', 'btn', async () => {
+      actionButton('Start', 'play', 'btn', async (ev) => {
+        const btn = ev.currentTarget;
+        if (btn.disabled) return;
+        btn.disabled = true;
         try {
           await invoke('start_recipe', { path: r.path, id: x.id });
           closeSheet();
           window.__TAURI__.window.getCurrentWindow().hide();
         } catch (e) {
-          note(String(e));
+          btn.disabled = false;
+          let err = $('sheet-body').querySelector('p.err');
+          if (!err) {
+            err = el('p', 'err');
+            $('sheet-body').prepend(err);
+          }
+          err.textContent = String(e);
         }
       }),
       actionButton('Copy', 'copy', 'btn ghost', async (ev) => {
@@ -805,14 +822,24 @@ function editRecipe(r, x) {
   nameField.append(name);
   const promptField = el('label', 'field', 'Prompt to start with');
   promptField.append(prompt);
+  name.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      $('sheet-ok').click();
+    }
+  });
   const err = el('p', 'err');
   err.hidden = true;
   const body = [nameField, promptField, err];
   if (x.id) {
-    body.push(actionButton('Delete recipe', 'trash', 'btn ghost', async () => {
+    body.push(actionButton('Delete recipe', 'trash', 'btn ghost', async (ev) => {
+      const btn = ev.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;
       try {
         showRecipes(r, await invoke('delete_recipe', { path: r.path, id: x.id }));
       } catch (e) {
+        btn.disabled = false;
         note(String(e));
       }
     }));
@@ -821,6 +848,7 @@ function editRecipe(r, x) {
     title: x.id ? 'Edit recipe' : 'New recipe',
     body,
     ok: 'Save',
+    onCancel: () => openRecipes(r),
     run: async () => {
       const problem = validateRecipe({ name: name.value, prompt: prompt.value });
       if (problem) {
