@@ -438,7 +438,7 @@ pub(crate) fn is_human_prompt(d: &CLine) -> bool {
     }
 }
 
-fn prompt_text(d: &CLine) -> Option<String> {
+pub(crate) fn prompt_text(d: &CLine) -> Option<String> {
     let raw = d.message.as_ref().and_then(|m| m.content)?;
     if raw.get().starts_with('"') {
         serde_json::from_str::<String>(raw.get()).ok()
