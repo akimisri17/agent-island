@@ -294,18 +294,70 @@ fn toggle_panel(app: &AppHandle) {
     show_panel(app);
 }
 
-/// A window normally lives on one Space, so the panel opened over a
-/// full-screen app would appear on the desktop instead. Joining all Spaces as
-/// a full-screen auxiliary window makes it open where the person is.
+/// A full-screen app is its own Space, and a normal window opened from a
+/// menu-bar app either lands on the desktop or pulls the person back there.
+/// Menu-bar apps use a non-activating NSPanel instead: it floats above
+/// full-screen apps on every Space and takes keystrokes without switching
+/// Spaces. The panel window is turned into one at start-up.
 #[cfg(target_os = "macos")]
-fn show_on_every_space(w: &tauri::WebviewWindow) {
-    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
-    let Ok(ptr) = w.ns_window() else { return };
-    // SAFETY: Tauri returns the window's live NSWindow; setup runs on the main thread.
-    let win: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
-    win.setCollectionBehavior(
-        win.collectionBehavior() | NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary,
+mod mac_panel {
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::{define_class, ClassType, MainThreadOnly};
+    use objc2_app_kit::{NSPanel, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask};
+
+    define_class!(
+        // SAFETY: NSPanel adds no instance variables to NSWindow, so an
+        // existing window can be switched to this subclass.
+        #[unsafe(super(NSPanel, NSWindow))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "AgentIslandPanel"]
+        struct IslandPanel;
+
+        impl IslandPanel {
+            // A borderless panel refuses key status by default; this one
+            // needs it for Esc and the keyboard shortcuts.
+            #[unsafe(method(canBecomeKeyWindow))]
+            fn can_become_key(&self) -> bool {
+                true
+            }
+            #[unsafe(method(canBecomeMainWindow))]
+            fn can_become_main(&self) -> bool {
+                false
+            }
+        }
     );
+
+    fn ns_window(w: &tauri::WebviewWindow) -> Option<&NSWindow> {
+        let ptr = w.ns_window().ok()?;
+        // SAFETY: Tauri returns the window's live NSWindow, used on the main thread.
+        Some(unsafe { &*(ptr as *const NSWindow) })
+    }
+
+    pub fn convert(w: &tauri::WebviewWindow) {
+        let Some(win) = ns_window(w) else { return };
+        let obj: &AnyObject = win.as_ref();
+        let cls: &AnyClass = IslandPanel::class();
+        // SAFETY: see define_class above; the window is not in use yet.
+        unsafe { AnyObject::set_class(obj, cls) };
+        win.setStyleMask(win.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+        win.setCollectionBehavior(
+            win.collectionBehavior()
+                | NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                | NSWindowCollectionBehavior::Stationary,
+        );
+        win.setLevel(NSStatusWindowLevel);
+        // Panels hide when their app is inactive; this app is never active.
+        win.setHidesOnDeactivate(false);
+    }
+
+    /// Brings the panel up over whatever is on screen, without activating
+    /// the app (activating would switch away from a full-screen Space).
+    pub fn show(w: &tauri::WebviewWindow) {
+        let Some(win) = ns_window(w) else { return };
+        win.makeKeyAndOrderFront(None);
+        win.orderFrontRegardless();
+    }
 }
 
 fn show_panel(app: &AppHandle) {
@@ -315,8 +367,13 @@ fn show_panel(app: &AppHandle) {
     let _ = w.move_window(Position::TrayCenter);
     #[cfg(not(target_os = "macos"))]
     let _ = w.move_window(Position::TrayBottomCenter);
-    let _ = w.show();
-    let _ = w.set_focus();
+    #[cfg(target_os = "macos")]
+    mac_panel::show(&w);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
     let _ = w.emit_to(PANEL, "panel-shown", ());
 }
 
@@ -347,10 +404,10 @@ pub fn run() {
             // Menu-bar only: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            // Show over full-screen apps and on every Space, like a menu.
+            // Float over full-screen apps, on every Space, like a menu.
             #[cfg(target_os = "macos")]
             if let Some(w) = app.get_webview_window(PANEL) {
-                show_on_every_space(&w);
+                mac_panel::convert(&w);
             }
 
             let report = MenuItem::with_id(app, "report", "Open full report", true, None::<&str>)?;
