@@ -175,8 +175,15 @@ fn lines(path: &Path) -> impl Iterator<Item = String> {
 // ---------- Claude Code ----------
 
 const EDIT_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
-const NOT_HUMAN_PREFIXES: [&str; 6] = [
+pub(crate) const NOT_HUMAN_PREFIXES: [&str; 13] = [
     "<local-command",
+    "<bash-input",
+    "<bash-stdout",
+    "<bash-stderr",
+    "<artifact-view-context",
+    "<command-name",
+    "<command-message",
+    "<command-args",
     "<task-notification",
     "<scheduled-task",
     "[SYSTEM",
@@ -413,8 +420,9 @@ pub(crate) fn is_human_prompt(d: &CLine) -> bool {
         return false;
     }
     let text = prompt_text(d);
-    // Scheduled tasks are logged as human but nobody typed them.
-    if text.as_deref().is_some_and(|t| t.trim_start().starts_with("<scheduled-task")) {
+    // Scheduled tasks, injected commands and context are logged as human but
+    // nobody typed them.
+    if text.as_deref().is_some_and(|t| NOT_HUMAN_PREFIXES.iter().any(|p| t.trim_start().starts_with(p))) {
         return false;
     }
     if let Some(o) = &d.origin {
@@ -731,6 +739,12 @@ mod tests {
     fn sdk_prompts_are_not_human() {
         let s = parse_claude(&fx("claude-sdk.jsonl"), SINCE, false);
         assert_eq!(s.prompts.len(), 1);
+    }
+
+    #[test]
+    fn injected_commands_and_context_are_not_human() {
+        let s = parse_claude(&fx("claude-injected.jsonl"), SINCE, false);
+        assert_eq!(s.prompts.len(), 1, "only the typed line counts");
     }
 
     #[test]

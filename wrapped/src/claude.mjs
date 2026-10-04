@@ -3,6 +3,13 @@ import { projectOf, readJsonl, newSession, createTurnTracker, addModel, addRespo
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const NOT_HUMAN_PREFIXES = [
   '<local-command',
+  '<bash-input',
+  '<bash-stdout',
+  '<bash-stderr',
+  '<artifact-view-context',
+  '<command-name',
+  '<command-message',
+  '<command-args',
   '<task-notification',
   '<scheduled-task',
   '[SYSTEM',
@@ -118,8 +125,9 @@ export function buildClaudeSessions(files) {
 function isHumanPrompt(d) {
   if (d.toolUseResult !== undefined || d.isMeta) return false;
   const text = promptText(d.message?.content);
-  // Scheduled tasks are logged as human but nobody typed them.
-  if (text?.trimStart().startsWith('<scheduled-task')) return false;
+  // Scheduled tasks, injected commands and context are logged as human but
+  // nobody typed them.
+  if (text !== null && NOT_HUMAN_PREFIXES.some((p) => text.trimStart().startsWith(p))) return false;
   if (d.origin) return d.origin.kind === 'human';
   // Programmatic runs (Agent SDK, `claude -p` from scripts and plugins such as
   // claude-mem) are not a person typing.
