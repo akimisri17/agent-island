@@ -7,12 +7,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const NEVER: &[&str] = &[
-    "cd", "for", "do", "if", "then", "else", "elif", "while", "until", "done", "fi", "case", "esac", "select", "time", "git -C",
-    "cat", "tee", "echo", "printf", "python", "python3", "node", "bash", "sh", "zsh", "eval", "exec", "xargs", "env", "source", "mv", "cp",
-    "rm", "sudo", "chmod", "chown", "dd", "mkfs", "kill", "pkill", "killall", "shutdown", "reboot", "curl", "wget", "ssh", "scp",
-    "git push", "git reset", "git clean", "git checkout", "git rebase", "docker rm", "docker system",
-];
 const SCRIPT: &str = "shell script";
 const MIN_TIMES: u32 = 3;
 const MAX_SUGGESTIONS: usize = 6;
@@ -39,29 +33,29 @@ pub struct ProjectFriction {
 }
 
 /// First two words of a command (one for single-word commands).
-pub fn group(cmd: &str) -> String {
+/// The first segment that is not `cd`, env assignments stripped; None for
+/// loops, conditionals and heredocs.
+fn meaningful(cmd: &str) -> Option<&str> {
     let c = cmd.trim();
     if ["for ", "while ", "until ", "if "].iter().any(|k| c.starts_with(k)) || c.contains("<<") {
-        return SCRIPT.to_string();
+        return None;
     }
-    let segs = perms::segments(cmd);
+    let segs = perms::segments(c);
     let first_word = |s: &str| s.split_whitespace().next().map(str::to_string).unwrap_or_default();
     if segs.iter().any(|s| matches!(first_word(perms::strip_env(s)).as_str(), "for" | "while" | "until" | "if" | "do" | "then" | "else" | "done" | "fi")) {
-        return SCRIPT.to_string();
+        return None;
     }
-    let seg = segs
-        .iter()
-        .map(|s| perms::strip_env(s))
-        .find(|s| !s.is_empty() && *s != "cd" && !s.starts_with("cd "))
-        .unwrap_or_else(|| segs.first().copied().unwrap_or(""));
-    seg.split_whitespace().take(2).collect::<Vec<_>>().join(" ").trim_end_matches(';').to_string()
+    let stripped: Vec<&str> = segs.iter().map(|s| perms::strip_env(s)).collect();
+    stripped.iter().find(|s| !s.is_empty() && **s != "cd" && !s.starts_with("cd ")).or(stripped.first()).copied()
 }
 
-fn never_suggest(g: &str) -> bool {
-    let first = g.split_whitespace().next().unwrap_or("");
-    let mut w = g.split_whitespace();
-    let read_only = perms::READ_ONLY.contains(&first) || (first == "git" && w.nth(1).is_some_and(|s| perms::READ_ONLY_GIT.contains(&s)));
-    g == SCRIPT || read_only || first.starts_with(['.', '/', '<']) || g.contains(['=', '>']) || NEVER.iter().any(|n| g == *n || g.starts_with(&format!("{n} ")) || first == *n)
+/// First two words of a command's meaningful segment (one for single-word
+/// commands), or "shell script" for loops and heredocs.
+pub fn group(cmd: &str) -> String {
+    match meaningful(cmd) {
+        None => SCRIPT.to_string(),
+        Some(seg) => seg.split_whitespace().take(2).collect::<Vec<_>>().join(" ").trim_end_matches(';').to_string(),
+    }
 }
 
 fn ts_of(d: &Value) -> Option<i64> {
@@ -171,6 +165,7 @@ pub fn scan(
         asked: u32,
         tools: HashMap<String, u32>,
         commands: HashMap<String, u32>,
+        safe: HashMap<&'static str, u32>,
         domains: HashMap<String, u32>,
         waits: Vec<i64>,
         affirm: u32,
@@ -187,10 +182,13 @@ pub fn scan(
             if tool == "Bash" {
                 if let Some(c) = input.get("command").and_then(Value::as_str) {
                     *a.commands.entry(group(c)).or_default() += 1;
+                    if let Some(e) = meaningful(c).and_then(perms::safe_entry) {
+                        *a.safe.entry(e).or_default() += 1;
+                    }
                 }
             } else if tool == "WebFetch" {
-                if let Some(h) = input.get("url").and_then(Value::as_str).and_then(|u| u.split_once("://")).and_then(|(_, r)| r.split('/').next()) {
-                    *a.domains.entry(h.to_lowercase()).or_default() += 1;
+                if let Some(h) = input.get("url").and_then(Value::as_str).and_then(perms::host).filter(|h| perms::safe_domain(h)) {
+                    *a.domains.entry(h).or_default() += 1;
                 }
             }
         }
@@ -210,7 +208,9 @@ pub fn scan(
             a.waits.sort_unstable();
             let median_wait_ms = (!a.waits.is_empty()).then(|| a.waits[a.waits.len() / 2]);
             let commands = sorted(a.commands);
-            let mut suggestions: Vec<String> = commands.iter().filter(|(g, n)| *n >= MIN_TIMES && !g.is_empty() && !never_suggest(g)).map(|(g, _)| format!("Bash({g}:*)")).collect();
+            let mut safe: Vec<(String, u32)> = a.safe.into_iter().map(|(e, n)| (e.to_string(), n)).collect();
+            safe.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            let mut suggestions: Vec<String> = safe.into_iter().filter(|(_, n)| *n >= MIN_TIMES).map(|(e, _)| format!("Bash({e}:*)")).collect();
             suggestions.extend(sorted(a.domains).into_iter().filter(|(_, n)| *n >= MIN_TIMES).map(|(h, _)| format!("WebFetch(domain:{h})")));
             suggestions.truncate(MAX_SUGGESTIONS);
             let name = crate::logs::basename(&project).unwrap_or_else(|| project.clone());
@@ -290,14 +290,23 @@ mod tests {
     }
 
     #[test]
-    fn unsafe_groups_are_never_suggested() {
-        for g in ["cd /w", "cat >", ".venv/bin/python -", "python3 x.py", "DOC=1", "/bin/ls", "git push", "cat <<EOF"] {
-            assert!(never_suggest(g), "{g}");
+    fn only_vetted_commands_are_suggested() {
+        let sugg = |cmd: &str| -> Option<&'static str> { meaningful(cmd).and_then(perms::safe_entry) };
+        assert_eq!(sugg("cargo test --lib"), Some("cargo test"));
+        assert_eq!(sugg("cd x && gh pr view 3"), Some("gh pr view"));
+        assert_eq!(sugg("FOO=1 make build"), Some("make"));
+        for c in ["git --no-pager log", "npx -y foo", "gh pr merge 3", "cat >", ".venv/bin/python -", "rm -rf x", "cargo testx", "for d in a; do make; done"] {
+            assert_eq!(sugg(c), None, "{c}");
         }
-        for g in ["shell script", "grep -n", "ls wiki/x", "git status", "git log"] {
-            assert!(never_suggest(g), "{g}");
+    }
+
+    #[test]
+    fn webfetch_hosts_are_vetted() {
+        let h = |u: &str| perms::host(u).filter(|h| perms::safe_domain(h));
+        assert_eq!(h("https://u:p@docs.rs:3000/x"), Some("docs.rs".to_string()));
+        for u in ["http://localhost:3000/", "https://nas.local/x", "http://10.0.0.1/", "https://intranet/"] {
+            assert_eq!(h(u), None, "{u}");
         }
-        assert!(!never_suggest("npm run"));
     }
 
     #[test]
