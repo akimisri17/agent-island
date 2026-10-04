@@ -37,6 +37,24 @@ fn read_only(segment: &str) -> bool {
     }
 }
 
+/// Parts of a compound command split on `&&`, `||`, `;`, `|` and `&`.
+pub fn segments(cmd: &str) -> Vec<&str> {
+    cmd.split(['|', ';', '&']).map(str::trim).filter(|s| !s.is_empty()).collect()
+}
+
+/// Drops leading `NAME=value` tokens.
+pub fn strip_env(seg: &str) -> &str {
+    let mut rest = seg.trim_start();
+    loop {
+        let tok = rest.split_whitespace().next().unwrap_or("");
+        let is_env = tok.split_once('=').is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        if !is_env {
+            return rest;
+        }
+        rest = rest[tok.len()..].trim_start();
+    }
+}
+
 /// `*` matches any run of characters; the whole command must match.
 fn glob(pattern: &str, s: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
@@ -115,16 +133,24 @@ impl Rules {
         Self::parse(files.iter().flat_map(|f| Self::from_file(f)))
     }
 
+    fn segment_rule(&self, seg: &str) -> bool {
+        self.bash_exact.iter().any(|e| e == seg)
+            || self.bash_glob.iter().any(|g| glob(g, seg))
+            || self.bash_prefix.iter().any(|p| seg == p || seg.starts_with(&format!("{p} ")))
+    }
+
     fn bash_allowed(&self, cmd: &str) -> bool {
         let cmd = cmd.trim();
-        if self.bash_exact.iter().any(|e| e == cmd) || self.bash_glob.iter().any(|g| glob(g, cmd)) {
+        if self.segment_rule(cmd) {
             return true;
         }
-        if self.bash_prefix.iter().any(|p| cmd == p || cmd.starts_with(&format!("{p} "))) {
-            return true;
-        }
-        let segments: Vec<&str> = cmd.split(['|', ';', '&']).map(str::trim).filter(|s| !s.is_empty()).collect();
-        !cmd.contains('>') && !segments.is_empty() && segments.iter().all(|s| read_only(s))
+        let segs = segments(cmd);
+        !segs.is_empty()
+            && segs.iter().all(|s| {
+                let s = strip_env(s);
+                let is_cd = s == "cd" || s.starts_with("cd ");
+                s.is_empty() || is_cd || self.segment_rule(s) || (!s.contains('>') && read_only(s))
+            })
     }
 
     /// Whether this call ran without asking (allowed by a rule, built in, or
@@ -252,5 +278,14 @@ mod tests {
         assert_eq!(add_local_rules(&e, &["Bash(make:*)".into()]).unwrap().len(), 1);
         assert!(e.join(".claude/settings.local.json").exists());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn compound_commands_are_judged_part_by_part() {
+        let r = rules(&["Bash(npm test:*)"]);
+        assert!(r.allows("Bash", &json!({"command": "cd /w && npm test"})));
+        assert!(!r.allows("Bash", &json!({"command": "cd /w && npm run build"})));
+        assert!(r.allows("Bash", &json!({"command": "FOO=1 npm test"})));
+        assert!(!r.allows("Bash", &json!({"command": "cat a > b"})));
     }
 }
