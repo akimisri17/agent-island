@@ -361,7 +361,7 @@ async fn start_recipe(app: AppHandle, path: String, id: String) -> Result<(), St
         let saved = recipes::load(&config_dir(&app)?).remove(&path).unwrap_or_default();
         let r = saved.into_iter().find(|r| r.id == id).ok_or("That recipe no longer exists.")?;
         let claude = recap::find_claude(&home).ok_or("Could not find the claude command.")?;
-        terminal::open_command(pick.as_deref(), repo, &claude, &[r.prompt], &script_name("recipe", &r.id), &scripts)
+        terminal::open_command(pick.as_deref(), repo, &claude, &["--".to_string(), r.prompt], &script_name("recipe", &r.id), &scripts)
     })
     .await
     .map_err(|e| e.to_string())?
