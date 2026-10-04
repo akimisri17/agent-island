@@ -25,21 +25,25 @@ pub struct Rules {
 }
 
 pub(crate) const READ_ONLY: [&str; 10] = ["ls", "pwd", "cat", "head", "tail", "wc", "echo", "which", "grep", "rg"];
-pub(crate) const READ_ONLY_GIT: [&str; 5] = ["status", "diff", "log", "show", "branch"];
+pub(crate) const READ_ONLY_GIT: [&str; 4] = ["status", "diff", "log", "show"];
 
 fn read_only(segment: &str) -> bool {
+    if segment.contains("$(") || segment.contains('`') || segment.contains("<(") {
+        return false;
+    }
     let words: Vec<&str> = segment.split_whitespace().collect();
     match words.as_slice() {
         [] => true,
         ["git", sub, ..] => READ_ONLY_GIT.contains(sub),
         ["find", rest @ ..] => !rest.iter().any(|w| matches!(*w, "-exec" | "-execdir" | "-delete" | "-ok")),
+        ["rg", rest @ ..] => !rest.iter().any(|w| *w == "--pre" || w.starts_with("--pre=")),
         [first, ..] => READ_ONLY.contains(first),
     }
 }
 
 /// Parts of a compound command split on `&&`, `||`, `;`, `|` and `&`.
 pub fn segments(cmd: &str) -> Vec<&str> {
-    cmd.split(['|', ';', '&']).map(str::trim).filter(|s| !s.is_empty()).collect()
+    cmd.split(['|', ';', '&', '\n']).map(str::trim).filter(|s| !s.is_empty()).collect()
 }
 
 /// Drops leading `NAME=value` tokens.
@@ -76,7 +80,7 @@ fn glob(pattern: &str, s: &str) -> bool {
     true
 }
 
-fn host(url: &str) -> Option<String> {
+pub(crate) fn host(url: &str) -> Option<String> {
     let after = url.split_once("://")?.1;
     let h = after.split(['/', '?', '#']).next()?.split('@').next_back()?.split(':').next()?;
     Some(h.to_lowercase()).filter(|h| !h.is_empty())
@@ -168,21 +172,66 @@ impl Rules {
                 .get("url")
                 .and_then(Value::as_str)
                 .and_then(host)
-                .is_some_and(|h| self.domains.iter().any(|d| h == *d || h.ends_with(&format!(".{d}")))),
+                .is_some_and(|h| self.domains.contains(&h)), // exact host only; a rule for github.com does not cover api.github.com
             _ => false,
         }
     }
 }
 
+/// Rule prefixes the app will ever suggest or write: build, test and
+/// read-only-ish tooling. Suggestions and `add_local_rules` are both gated by it.
+pub(crate) const SAFE: &[&str] = &[
+    "cargo test", "cargo build", "cargo check", "cargo clippy", "cargo fmt", "npm test", "npm run", "pnpm test", "pnpm run",
+    "pnpm build", "yarn test", "yarn run", "yarn build", "bun test", "bun run", "make", "go test", "go build", "go vet", "pytest",
+    "ruff check", "mypy", "tsc", "npx tsc", "npx vitest", "npx jest", "npx eslint", "npx prettier", "swift build", "swift test",
+    "mvn test", "dotnet build", "dotnet test", "git add", "git commit", "gh pr view", "gh pr list", "gh pr checks", "gh run view",
+    "gh run list",
+];
+
+/// Longest SAFE entry that is a whole-token prefix of `cmd`.
+pub(crate) fn safe_entry(cmd: &str) -> Option<&'static str> {
+    let toks: Vec<&str> = cmd.split_whitespace().collect();
+    SAFE.iter()
+        .filter(|e| {
+            let et: Vec<&str> = e.split(' ').collect();
+            toks.len() >= et.len() && toks[..et.len()] == et[..]
+        })
+        .max_by_key(|e| e.len())
+        .copied()
+}
+
+pub(crate) fn safe_domain(h: &str) -> bool {
+    h.contains('.')
+        && !h.ends_with(".local")
+        && h != "localhost"
+        && h.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
+        && !h.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())) // IPv4 literal
+        && !h.starts_with('.')
+}
+
+fn rule_ok(r: &str) -> bool {
+    if r.contains(['\n', '\r']) {
+        return false;
+    }
+    if let Some(e) = r.strip_prefix("Bash(").and_then(|x| x.strip_suffix(":*)")) {
+        return SAFE.contains(&e);
+    }
+    r.strip_prefix("WebFetch(domain:").and_then(|x| x.strip_suffix(')')).is_some_and(safe_domain)
+}
+
 /// Adds `rules` to `<project>/.claude/settings.local.json` (creating it),
 /// keeping everything else. Returns the rules that were new.
 pub fn add_local_rules(project: &Path, rules: &[String]) -> Result<Vec<String>, String> {
+    if rules.iter().any(|r| !rule_ok(r)) {
+        return Err("That rule can't be added.".into());
+    }
     let dir = project.join(".claude");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = dir.join("settings.local.json");
     let mut v: Value = match std::fs::read(&file) {
         Ok(b) => serde_json::from_slice(&b).map_err(|_| "That project's settings.local.json isn't valid JSON; fix it first.".to_string())?,
-        Err(_) => serde_json::json!({}),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(e.to_string()),
     };
     let obj = v.as_object_mut().ok_or("That project's settings.local.json isn't a JSON object.")?;
     let perms = obj.entry("permissions").or_insert_with(|| serde_json::json!({}));
@@ -198,7 +247,14 @@ pub fn add_local_rules(project: &Path, rules: &[String]) -> Result<Vec<String>, 
     }
     let tmp = dir.join(format!("settings.local.json.{}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    if let Ok(m) = std::fs::metadata(&file) {
+        let _ = std::fs::set_permissions(&tmp, m.permissions());
+    }
+    if let Err(e) = std::fs::rename(&tmp, &file) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     Ok(added)
 }
 
@@ -240,7 +296,7 @@ mod tests {
         assert!(r.allows("Edit", &json!({"file_path": "/w/a.rs"})));
         assert!(!r.allows("Write", &json!({"file_path": "/w/a.rs"})));
         assert!(r.allows("WebFetch", &json!({"url": "https://github.com/a/b"})));
-        assert!(r.allows("WebFetch", &json!({"url": "https://api.github.com/x"})), "subdomains of an allowed domain");
+        assert!(!r.allows("WebFetch", &json!({"url": "https://api.github.com/x"})), "exact host only");
         assert!(!r.allows("WebFetch", &json!({"url": "https://example.com/"})));
         assert!(r.allows("mcp__linear__list_issues", &json!({})));
         assert!(!r.allows("mcp__linear__create_issue", &json!({})));
@@ -287,5 +343,33 @@ mod tests {
         assert!(!r.allows("Bash", &json!({"command": "cd /w && npm run build"})));
         assert!(r.allows("Bash", &json!({"command": "FOO=1 npm test"})));
         assert!(!r.allows("Bash", &json!({"command": "cat a > b"})));
+    }
+
+    #[test]
+    fn only_vetted_rules_are_written() {
+        let d = std::env::temp_dir().join(format!("ai-perms-val-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for bad in ["Bash(*)", "Bash(rm:*)", "Bash(make:*)\nBash(rm:*)", "WebFetch(domain:localhost)", "WebFetch(domain:10.0.0.1)", "Bash(npm run)"] {
+            assert!(add_local_rules(&d, &[bad.to_string()]).is_err(), "{bad}");
+        }
+        assert!(!d.join(".claude/settings.local.json").exists());
+        assert!(add_local_rules(&d, &["WebFetch(domain:docs.rs)".into(), "Bash(cargo test:*)".into()]).is_ok());
+        // A read error other than "not found" is not treated as an empty file.
+        let e = d.join("odd");
+        std::fs::create_dir_all(e.join(".claude/settings.local.json")).unwrap();
+        assert!(add_local_rules(&e, &["Bash(make:*)".into()]).is_err());
+        assert!(e.join(".claude/settings.local.json").is_dir());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn stricter_read_only() {
+        let r = rules(&[]);
+        for c in ["git branch -D x", "ls $(rm x)", "cat `x`", "rg --pre sh x", "cat <(x)", "ls\nrm x"] {
+            assert!(!r.allows("Bash", &json!({"command": c})), "{c}");
+        }
+        let w = rules(&["WebFetch(domain:github.com)"]);
+        assert!(!w.allows("WebFetch", &json!({"url": "https://api.github.com/x"})));
     }
 }
