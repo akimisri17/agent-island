@@ -195,6 +195,11 @@ test('claude: SDK-driven prompts and continuation summaries are not a person typ
   assert.equal(s.prompts.length, 1); // only "real question"
 });
 
+test('claude: injected commands and context are not a person typing, even when logged as human', async () => {
+  const s = await parseClaudeFile(fx('claude-injected.jsonl'), { since });
+  assert.equal(s.prompts.length, 1); // only the typed line
+});
+
 test('claude: scheduled tasks are not a person typing, even when logged as human', async () => {
   const s = await parseClaudeFile(fx('claude-scheduled.jsonl'), { since });
   assert.equal(s.prompts.length, 0);
