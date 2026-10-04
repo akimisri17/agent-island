@@ -186,6 +186,82 @@ pub fn runs(projects: &Path, since: i64, now: i64, fresh_ms: i64) -> Vec<Run> {
     files.par_iter().filter_map(|(p, m)| run_of(p, *m, now, fresh_ms)).collect()
 }
 
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRow {
+    pub name: String,
+    pub description: Option<String>,
+    /// "missed", "failed", "stopped", "running", "ok" or "never".
+    pub state: &'static str,
+    pub last: Option<Run>,
+    /// Median gap between starts, when there are at least two runs.
+    pub cadence_ms: Option<i64>,
+    /// Last 7 local days, oldest first: "ran", "failed", "missed" or "none".
+    pub days: Vec<&'static str>,
+}
+
+const ORDER: [&str; 6] = ["failed", "stopped", "missed", "running", "ok", "never"];
+
+fn local_day(ms: i64) -> chrono::NaiveDate {
+    use chrono::TimeZone;
+    chrono::Local.timestamp_millis_opt(ms).single().map_or_else(|| chrono::Local::now().date_naive(), |t| t.date_naive())
+}
+
+/// One row per task (defined or seen running), problems first.
+pub fn board(defs: &[TaskDef], runs: &[Run], now: i64) -> Vec<TaskRow> {
+    let mut names: Vec<String> = defs.iter().map(|d| d.name.clone()).collect();
+    for r in runs {
+        if !names.contains(&r.task) {
+            names.push(r.task.clone());
+        }
+    }
+    let today = local_day(now);
+    let mut rows: Vec<TaskRow> = names
+        .into_iter()
+        .map(|name| {
+            let mut mine: Vec<&Run> = runs.iter().filter(|r| r.task == name).collect();
+            mine.sort_by_key(|r| r.start);
+            let mut gaps: Vec<i64> = mine.windows(2).map(|w| w[1].start - w[0].start).collect();
+            gaps.sort_unstable();
+            let cadence_ms = (!gaps.is_empty()).then(|| gaps[gaps.len() / 2]);
+            let last = mine.last().map(|r| (*r).clone());
+            let state = match &last {
+                None => "never",
+                Some(l) if l.outcome == Outcome::Running => "running",
+                Some(l) if l.outcome == Outcome::Failed => "failed",
+                Some(l) if l.outcome == Outcome::Stopped => "stopped",
+                Some(l) if cadence_ms.is_some_and(|c| now - l.start > c * 3 / 2) => "missed",
+                Some(_) => "ok",
+            };
+            let first_day = mine.first().map(|r| local_day(r.start));
+            let daily = cadence_ms.is_some_and(|c| c <= 26 * 3_600_000);
+            let days = (0..7)
+                .rev()
+                .map(|back| {
+                    let day = today - chrono::Days::new(back);
+                    let that: Vec<&&Run> = mine.iter().filter(|r| local_day(r.start) == day).collect();
+                    if that.iter().any(|r| matches!(r.outcome, Outcome::Done | Outcome::Running)) {
+                        "ran"
+                    } else if !that.is_empty() {
+                        "failed"
+                    } else if daily && first_day.is_some_and(|f| day >= f) && (day < today || state == "missed") {
+                        "missed"
+                    } else {
+                        "none"
+                    }
+                })
+                .collect();
+            let description = defs.iter().find(|d| d.name == name).and_then(|d| d.description.clone());
+            TaskRow { name, description, state, last, cadence_ms, days }
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        let rank = |s: &str| ORDER.iter().position(|o| *o == s).unwrap_or(ORDER.len());
+        rank(a.state).cmp(&rank(b.state)).then_with(|| a.name.cmp(&b.name))
+    });
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +344,64 @@ mod tests {
         let r = runs(&d, 0, t0 + H, 10 * 365 * 24 * H); // every file counts as fresh
         assert_eq!(r[0].outcome, Outcome::Running);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn def(name: &str) -> TaskDef {
+        TaskDef { name: name.into(), description: Some(format!("{name} description")), file: format!("/u/{name}/SKILL.md"), body: String::new() }
+    }
+    fn run(task: &str, start: i64, outcome: Outcome) -> Run {
+        Run { task: task.into(), session_id: format!("{task}-{start}"), cwd: Some("/w".into()), start, end: start + 180_000, outcome }
+    }
+    /// Local midnight `days` days ago, plus `hour` hours.
+    fn local(days: i64, hour: i64) -> i64 {
+        let today = chrono::Local::now().date_naive();
+        let d = today - chrono::Days::new(days as u64);
+        d.and_hms_opt(0, 0, 0).unwrap().and_local_timezone(chrono::Local).earliest().unwrap().timestamp_millis() + hour * H
+    }
+
+    #[test]
+    fn daily_task_on_time() {
+        let runs: Vec<Run> = (0..7).map(|d| run("eod", local(d, 8), Outcome::Done)).collect();
+        let b = board(&[def("eod")], &runs, local(0, 12));
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].state, "ok");
+        assert_eq!(b[0].days, vec!["ran"; 7]);
+        let c = b[0].cadence_ms.unwrap();
+        assert!((23 * H..=25 * H).contains(&c), "about a day");
+        assert_eq!(b[0].last.as_ref().unwrap().start, local(0, 8));
+    }
+
+    #[test]
+    fn daily_task_that_stopped_running_is_missed() {
+        let runs: Vec<Run> = (2..7).map(|d| run("eod", local(d, 8), Outcome::Done)).collect();
+        let b = board(&[def("eod")], &runs, local(0, 12));
+        assert_eq!(b[0].state, "missed");
+        assert_eq!(b[0].days, vec!["ran", "ran", "ran", "ran", "ran", "missed", "missed"]);
+    }
+
+    #[test]
+    fn failed_stopped_running_and_never() {
+        let runs = vec![
+            run("a", local(1, 8), Outcome::Done),
+            run("a", local(0, 8), Outcome::Failed),
+            run("b", local(0, 8), Outcome::Stopped),
+            run("c", local(0, 11), Outcome::Running),
+        ];
+        let b = board(&[def("a"), def("b"), def("c"), def("d")], &runs, local(0, 12));
+        let state = |n: &str| b.iter().find(|r| r.name == n).unwrap().state;
+        assert_eq!(state("a"), "failed");
+        assert_eq!(state("b"), "stopped");
+        assert_eq!(state("c"), "running");
+        assert_eq!(state("d"), "never");
+        assert_eq!(b.iter().find(|r| r.name == "a").unwrap().days[6], "failed");
+        // Problems first, then running, then fine, then never ran.
+        assert_eq!(b.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn runs_of_tasks_no_longer_defined_still_show() {
+        let b = board(&[], &[run("old", local(0, 8), Outcome::Done)], local(0, 12));
+        assert_eq!(b[0].name, "old");
+        assert_eq!(b[0].description, None);
     }
 }
