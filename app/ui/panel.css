@@ -219,3 +219,4 @@ code, .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: 
 .rule-pick { display: flex; flex-direction: column; gap: 6px; }
 .rule-pick label { display: flex; align-items: center; gap: 8px; font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); }
 .rule-pick input { accent-color: var(--primary); }
+#friction-list .row-actions { padding-left: 0; }
