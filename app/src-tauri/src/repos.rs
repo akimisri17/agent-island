@@ -95,7 +95,7 @@ fn scrub(line: &str) -> String {
 }
 
 /// Actions only run on a repository's own top folder, as listed on the board.
-fn check_root(path: &Path) -> Result<(), String> {
+pub(crate) fn check_root(path: &Path) -> Result<(), String> {
     match repo_root(path) {
         Some(root) if root == path => Ok(()),
         _ => Err("Not a repository folder.".into()),
@@ -163,6 +163,11 @@ fn repo_root(cwd: &Path) -> Option<PathBuf> {
     }
     // Bare repository or unusual layout: fall back to the checkout itself.
     git(cwd, &["rev-parse", "--show-toplevel"]).map(|t| PathBuf::from(t.trim()))
+}
+
+/// The repository folder a working directory belongs to (worktrees fold in).
+pub fn root_of(cwd: &Path) -> Option<PathBuf> {
+    repo_root(cwd)
 }
 
 /// Git state for each repository behind these folders, in parallel.
