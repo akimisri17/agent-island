@@ -25,7 +25,7 @@ const data = ${JSON.stringify(data)};
 const handlers = {
   scan_today: () => data.scan, scan: () => data.scan30, repo_status: () => data.repos,
   recap_commits: () => [], live: () => [], limits: () => ({}),
-  get_settings: () => ({ hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false }),
+  get_settings: () => ({ hotkey: 'ctrl+alt+KeyJ', notifyLimits: true, recapWithClaude: false, notifyMissedTasks: true }),
   set_settings: ({ next }) => next, open_report: () => null, jump: () => null, quit: () => null,
   repo_pull: () => 3,
   repo_delete_branches: ({ names }) => names,
@@ -36,6 +36,17 @@ const handlers = {
     { sessionId: 'bbbb-2', title: null, project: 'erp-backend', cwd: '/tmp', kind: 'interrupted', limitType: null, at: Date.now() - 50 * 60000, resetsAt: null },
   ],
   resume_session: () => null,
+  tasks_board: () => {
+    const H = 3600000, now = Date.now();
+    const last = (h, outcome) => ({ sessionId: 's', cwd: '/tmp', start: now - h * H, end: now - h * H + 180000, outcome });
+    return [
+      { name: 'personal-products-digest', description: 'Daily product digest', state: 'missed', last: last(28, 'done'), cadenceMs: 24 * H, days: ['ran', 'ran', 'ran', 'ran', 'ran', 'ran', 'missed'] },
+      { name: 'plugin-radar-daily', description: 'Plugin radar', state: 'stopped', last: last(6, 'stopped'), cadenceMs: 24 * H, days: ['none', 'none', 'none', 'none', 'ran', 'ran', 'failed'] },
+      { name: 'tts-eod-digest', description: 'EoD digest', state: 'ok', last: last(3, 'done'), cadenceMs: 24 * H, days: ['ran', 'ran', 'ran', 'ran', 'ran', 'ran', 'ran'] },
+    ];
+  },
+  run_task: () => null,
+  open_task_run: () => null,
   test_notification: () => null,
   polish_recap: () => 'Done\\n- preview: polished text',
 };
