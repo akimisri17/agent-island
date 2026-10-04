@@ -385,6 +385,61 @@ async fn polish_recap(app: AppHandle, text: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Approval friction per range (days), cached ten minutes.
+type FrictionCache = std::collections::HashMap<u32, (i64, Vec<approvals::ProjectFriction>)>;
+static FRICTION_CACHE: Mutex<Option<FrictionCache>> = Mutex::new(None);
+
+fn friction(r: &logs::Roots, home: &std::path::Path, days: u32) -> Vec<approvals::ProjectFriction> {
+    let now = logs::now_ms();
+    if let Some((at, v)) = FRICTION_CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.get(&days)) {
+        if now - at < 600_000 {
+            return v.clone();
+        }
+    }
+    let root_of = |cwd: &str| repos::root_of(std::path::Path::new(cwd)).map(|p| p.to_string_lossy().into_owned());
+    let rules_for = |p: &str| perms::Rules::for_project(std::path::Path::new(p), home);
+    let v = approvals::scan(&r.claude, now - i64::from(days) * 86_400_000, &root_of, &rules_for);
+    FRICTION_CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(days, (now, v.clone()));
+    v
+}
+
+/// Rules changed: recompute on the next read.
+fn clear_friction() {
+    *FRICTION_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+#[tauri::command]
+async fn approvals(app: AppHandle, days: u32) -> Result<Vec<approvals::ProjectFriction>, String> {
+    let r = roots(&app)?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let days = days.clamp(1, 365);
+    tauri::async_runtime::spawn_blocking(move || friction(&r, &home, days)).await.map_err(|e| e.to_string())
+}
+
+/// Adds the chosen suggested rules to the project's .claude/settings.local.json.
+/// Only rules the app itself suggested for that project are accepted.
+#[tauri::command]
+async fn allow_rules(app: AppHandle, project: String, rules: Vec<String>, days: u32) -> Result<Vec<String>, String> {
+    let r = roots(&app)?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = friction(&r, &home, days.clamp(1, 365));
+        let p = known.iter().find(|p| p.project == project).ok_or("That project is no longer in the list.")?;
+        if rules.is_empty() || rules.iter().any(|x| !p.suggestions.contains(x)) {
+            return Err("Only the suggested rules can be added.".into());
+        }
+        let dir = std::path::Path::new(&project);
+        if !dir.is_absolute() || !dir.is_dir() {
+            return Err("That project folder no longer exists.".into());
+        }
+        let added = perms::add_local_rules(dir, &rules)?;
+        clear_friction();
+        Ok(added)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Lets the person check that notifications reach them (macOS may ask first).
 #[tauri::command]
 fn test_notification(app: AppHandle) -> Result<(), String> {
@@ -593,7 +648,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, repo_pull, repo_delete_branches, terminals, open_terminal, cut_off, resume_session, tasks_board, run_task, open_task_run, recipes_for, save_recipe, delete_recipe, start_recipe, polish_recap])
+        .invoke_handler(tauri::generate_handler![scan, open_report, quit, live, jump, limits, get_settings, set_settings, test_notification, scan_today, recap_commits, repo_status, repo_pull, repo_delete_branches, terminals, open_terminal, cut_off, resume_session, tasks_board, run_task, open_task_run, recipes_for, save_recipe, delete_recipe, start_recipe, polish_recap, approvals, allow_rules])
         .setup(|app| {
             let prefs = config_dir(app.handle()).map(|d| settings::load(&d)).unwrap_or_default();
             let hotkey = prefs.hotkey.parse::<Shortcut>().or_else(|_| settings::DEFAULT_HOTKEY.parse()).expect("default hotkey parses");
