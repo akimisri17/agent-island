@@ -26,7 +26,8 @@ pub fn load(dir: &Path) -> Store {
 
 pub fn save(dir: &Path, s: &Store) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join("recipes.json.tmp");
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let tmp = dir.join(format!("recipes.json.{}.{nanos}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_vec_pretty(s)?)?;
     std::fs::rename(tmp, file(dir))
 }
@@ -34,7 +35,7 @@ pub fn save(dir: &Path, s: &Store) -> std::io::Result<()> {
 fn new_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    format!("r{}{}", crate::logs::now_ms(), N.fetch_add(1, Ordering::Relaxed))
+    format!("r{}-{}", crate::logs::now_ms(), N.fetch_add(1, Ordering::Relaxed))
 }
 
 /// Adds a recipe (no `id`) or replaces one. Returns its id.
@@ -106,9 +107,10 @@ fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// How two prompts are compared: whitespace collapsed, case ignored.
+/// How two prompts are compared: whitespace collapsed, case and trailing
+/// punctuation ignored.
 pub fn key(s: &str) -> String {
-    collapse(s).to_lowercase()
+    collapse(s).to_lowercase().trim_end_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace()).to_string()
 }
 
 fn jsonl_since(dir: &Path, since: i64, out: &mut Vec<PathBuf>) {
@@ -149,6 +151,10 @@ fn prompts_in(path: &Path, since: i64) -> Vec<(String, String, i64, String)> {
             continue;
         }
         let (Some(uuid), Some(cwd), Some(p)) = (d.uuid.clone(), d.cwd.clone(), prompt_text(&d)) else { continue };
+        let t = p.trim_start();
+        if t.starts_with('<') || t.starts_with("http") {
+            continue; // pasted tags and links are not a routine
+        }
         out.push((uuid, cwd, at, p));
     }
     out
@@ -302,5 +308,45 @@ mod tests {
     #[test]
     fn same_prompt_key_ignores_case_and_spaces() {
         assert_eq!(key("  Switch  to main\nand pull "), "switch to main and pull");
+        assert_eq!(key("Switch to main and pull."), key("switch to main and pull "));
+        assert_eq!(key("Switch to main and pull!?"), "switch to main and pull");
+    }
+
+    fn side(uuid: &str, at: i64, cwd: &str, text: &str) -> String {
+        prompt(uuid, at, cwd, text).replacen("\"type\":\"user\"", "\"type\":\"user\",\"isSidechain\":true", 1)
+    }
+
+    #[test]
+    fn sidechain_old_and_pasted_lines_are_ignored() {
+        let d = tmp("ignored");
+        let root_of = |_: &str| Some("/w/shop".to_string());
+        let mut lines = vec![prompt("a1", NOW - 3_000, "/w/shop", LONG), prompt("a2", NOW - 2_000, "/w/shop", LONG)];
+        lines.push(side("a3", NOW - 1_000, "/w/shop", LONG)); // sidechain: not typed
+        lines.push(prompt("a4", NOW - 900_000_000, "/w/shop", LONG)); // before `since`
+        log(&d.join("p"), "a.jsonl", &lines);
+        assert!(mine(&d, NOW - 100_000_000, &root_of).is_empty(), "two typed copies are not a habit");
+        let tag = "<command-name>/pull-and-raise-a-pull-request-now</command-name>";
+        let url = "https://example.com/some/long/link/that/was/pasted/three/times";
+        let l: Vec<String> = (0..3).flat_map(|i| [prompt(&format!("t{i}"), NOW - i, "/w/shop", tag), prompt(&format!("h{i}"), NOW - i, "/w/shop", url)]).collect();
+        log(&d.join("q"), "b.jsonl", &l);
+        assert!(mine(&d.join("q"), 0, &root_of).is_empty(), "pasted tags and links are skipped");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn only_the_top_five_by_count_are_kept() {
+        let d = tmp("top");
+        let root_of = |_: &str| Some("/w/shop".to_string());
+        let mut lines = Vec::new();
+        for g in 0..7 {
+            for k in 0..(3 + g) {
+                lines.push(prompt(&format!("g{g}-{k}"), NOW - (g * 100 + k) as i64, "/w/shop", &format!("recurring routine number {g} for this repository")));
+            }
+        }
+        log(&d.join("p"), "a.jsonl", &lines);
+        let m = mine(&d, 0, &root_of);
+        let counts: Vec<u32> = m["/w/shop"].iter().map(|s| s.count).collect();
+        assert_eq!(counts, vec![9, 8, 7, 6, 5]);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
