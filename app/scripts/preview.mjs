@@ -92,7 +92,7 @@ if (data.demo) {
       return [
         { name: 'morning-dependency-check', description: 'Check for outdated packages', state: 'missed', last: last(28, 'done'), cadenceMs: 24 * H, days: ['ran', 'ran', 'ran', 'ran', 'ran', 'ran', 'missed'] },
         { name: 'docs-link-checker', description: 'Find broken links in the docs', state: 'stopped', last: last(6, 'stopped'), cadenceMs: 24 * H, days: ['none', 'none', 'ran', 'ran', 'ran', 'ran', 'failed'] },
-        { name: 'weekly-changelog', description: 'Draft the changelog from merged PRs', state: 'ok', last: last(3, 'done'), cadenceMs: 24 * H, days: ['ran', 'ran', 'ran', 'ran', 'ran', 'ran', 'ran'] },
+        { name: 'nightly-changelog', description: 'Draft the changelog from merged PRs', state: 'ok', last: last(3, 'done'), cadenceMs: 24 * H, days: ['ran', 'ran', 'ran', 'ran', 'ran', 'ran', 'ran'] },
       ];
     },
     recipes_for: () => ({
