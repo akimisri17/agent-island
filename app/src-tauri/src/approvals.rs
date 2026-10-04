@@ -13,6 +13,7 @@ const NEVER: &[&str] = &[
     "rm", "sudo", "chmod", "chown", "dd", "mkfs", "kill", "pkill", "killall", "shutdown", "reboot", "curl", "wget", "ssh", "scp",
     "git push", "git reset", "git clean", "git checkout", "git rebase", "docker rm", "docker system",
 ];
+const SCRIPT: &str = "shell script";
 const MIN_TIMES: u32 = 3;
 const MAX_SUGGESTIONS: usize = 6;
 const AFFIRM: [&str; 14] = ["yes", "yep", "y", "ok", "okay", "go ahead", "proceed", "do it", "continue", "sure", "go", "yes please", "go for it", "lgtm"];
@@ -39,7 +40,15 @@ pub struct ProjectFriction {
 
 /// First two words of a command (one for single-word commands).
 pub fn group(cmd: &str) -> String {
+    let c = cmd.trim();
+    if ["for ", "while ", "until ", "if "].iter().any(|k| c.starts_with(k)) || c.contains("<<") {
+        return SCRIPT.to_string();
+    }
     let segs = perms::segments(cmd);
+    let first_word = |s: &str| s.split_whitespace().next().map(str::to_string).unwrap_or_default();
+    if segs.iter().any(|s| matches!(first_word(perms::strip_env(s)).as_str(), "for" | "while" | "until" | "if" | "do" | "then" | "else" | "done" | "fi")) {
+        return SCRIPT.to_string();
+    }
     let seg = segs
         .iter()
         .map(|s| perms::strip_env(s))
@@ -50,7 +59,9 @@ pub fn group(cmd: &str) -> String {
 
 fn never_suggest(g: &str) -> bool {
     let first = g.split_whitespace().next().unwrap_or("");
-    first.starts_with(['.', '/', '<']) || g.contains(['=', '>']) || NEVER.iter().any(|n| g == *n || g.starts_with(&format!("{n} ")) || first == *n)
+    let mut w = g.split_whitespace();
+    let read_only = perms::READ_ONLY.contains(&first) || (first == "git" && w.nth(1).is_some_and(|s| perms::READ_ONLY_GIT.contains(&s)));
+    g == SCRIPT || read_only || first.starts_with(['.', '/', '<']) || g.contains(['=', '>']) || NEVER.iter().any(|n| g == *n || g.starts_with(&format!("{n} ")) || first == *n)
 }
 
 fn ts_of(d: &Value) -> Option<i64> {
@@ -283,6 +294,18 @@ mod tests {
         for g in ["cd /w", "cat >", ".venv/bin/python -", "python3 x.py", "DOC=1", "/bin/ls", "git push", "cat <<EOF"] {
             assert!(never_suggest(g), "{g}");
         }
+        for g in ["shell script", "grep -n", "ls wiki/x", "git status", "git log"] {
+            assert!(never_suggest(g), "{g}");
+        }
         assert!(!never_suggest("npm run"));
+    }
+
+    #[test]
+    fn loops_and_heredocs_are_one_group() {
+        assert_eq!(group("for d in a b; do echo $d; done"), "shell script");
+        assert_eq!(group("while true; do x; done"), "shell script");
+        assert_eq!(group("cat <<EOF > f\nhi\nEOF"), "shell script");
+        assert_eq!(group("cd x && npm test"), "npm test");
+        assert_eq!(group("cd x && for d in a; do ls; done"), "shell script");
     }
 }
