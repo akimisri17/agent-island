@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased (since app-v0.1.0)
+## 0.2.0 (2026-10-05)
 
 ### New
 
