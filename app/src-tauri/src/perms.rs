@@ -24,8 +24,8 @@ pub struct Rules {
     domains: Vec<String>,
 }
 
-const READ_ONLY: [&str; 10] = ["ls", "pwd", "cat", "head", "tail", "wc", "echo", "which", "grep", "rg"];
-const READ_ONLY_GIT: [&str; 5] = ["status", "diff", "log", "show", "branch"];
+pub(crate) const READ_ONLY: [&str; 10] = ["ls", "pwd", "cat", "head", "tail", "wc", "echo", "which", "grep", "rg"];
+pub(crate) const READ_ONLY_GIT: [&str; 5] = ["status", "diff", "log", "show", "branch"];
 
 fn read_only(segment: &str) -> bool {
     let words: Vec<&str> = segment.split_whitespace().collect();
